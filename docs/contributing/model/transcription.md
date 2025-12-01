@@ -15,9 +15,8 @@ Declare supported languages and capabilities:
 - Set `supports_transcription_only=True` if the model should not serve text generation (eg Whisper).
 
 ??? code "supported_languages and supports_transcription_only"
-
     ```python
-    from typing import ClassVar, Mapping, Literal
+    from typing import ClassVar, Mapping, Optional, Literal
     import numpy as np
     import torch
     from torch import nn
@@ -44,7 +43,6 @@ Provide an ASR configuration via [get_speech_to_text_config][vllm.model_executor
 This is for controlling general behavior of the API when serving your model:
 
 ??? code "get_speech_to_text_config()"
-
     ```python
     class YourASRModel(nn.Module, SupportsTranscription):
         ...
@@ -73,7 +71,6 @@ Implement the prompt construction via [get_generation_prompt][vllm.model_executo
 Return a dict containing `multi_modal_data` with the audio, and either a `prompt` string or `prompt_token_ids`:
 
 ??? code "get_generation_prompt()"
-
     ```python
     class YourASRModel(nn.Module, SupportsTranscription):
         ...
@@ -84,10 +81,10 @@ Return a dict containing `multi_modal_data` with the audio, and either a `prompt
             audio: np.ndarray,
             stt_config: SpeechToTextConfig,
             model_config: ModelConfig,
-            language: str | None,
+            language: Optional[str],
             task_type: Literal["transcribe", "translate"],
             request_prompt: str,
-            to_language: str | None,
+            to_language: Optional[str],
         ) -> PromptType:
             # Example with a free-form instruction prompt
             task_word = "Transcribe" if task_type == "transcribe" else "Translate"
@@ -110,7 +107,6 @@ Return a dict containing `multi_modal_data` with the audio, and either a `prompt
 Return a dict with separate `encoder_prompt` and `decoder_prompt` entries:
 
 ??? code "get_generation_prompt()"
-
     ```python
     class YourASRModel(nn.Module, SupportsTranscription):
         ...
@@ -121,10 +117,10 @@ Return a dict with separate `encoder_prompt` and `decoder_prompt` entries:
             audio: np.ndarray,
             stt_config: SpeechToTextConfig,
             model_config: ModelConfig,
-            language: str | None,
+            language: Optional[str],
             task_type: Literal["transcribe", "translate"],
             request_prompt: str,
-            to_language: str | None,
+            to_language: Optional[str],
         ) -> PromptType:
             if language is None:
                 raise ValueError("Language must be specified")
@@ -152,16 +148,12 @@ Language validation via [validate_language][vllm.model_executor.models.interface
 If your model requires a language and you want a default, override this method (see Whisper):
 
 ??? code "validate_language()"
-
     ```python
     @classmethod
-    def validate_language(cls, language: str | None) -> str | None:
+    def validate_language(cls, language: Optional[str]) -> Optional[str]:
         if language is None:
             logger.warning(
-                "Defaulting to language='en'. If you wish to transcribe "
-                "audio in a different language, pass the `language` field "
-                "in the TranscriptionRequest."
-            )
+                "Defaulting to language='en'. If you wish to transcribe audio in a different language, pass the `language` field.")
             language = "en"
         return super().validate_language(language)
     ```
@@ -173,7 +165,6 @@ Token accounting for streaming via [get_num_audio_tokens][vllm.model_executor.mo
 Provide a fast duration→token estimate to improve streaming usage statistics:
 
 ??? code "get_num_audio_tokens()"
-
     ```python
     class YourASRModel(nn.Module, SupportsTranscription):
         ...
@@ -184,7 +175,7 @@ Provide a fast duration→token estimate to improve streaming usage statistics:
             audio_duration_s: float,
             stt_config: SpeechToTextConfig,
             model_config: ModelConfig,
-        ) -> int | None:
+        ) -> Optional[int]:
             # Return None if unknown; otherwise return an estimate.
             return int(audio_duration_s * stt_config.sample_rate // 320)  # example
     ```
@@ -200,7 +191,6 @@ The API server takes care of basic audio I/O and optional chunking before buildi
 Relevant server logic:
 
 ??? code "_preprocess_speech_to_text()"
-
     ```python
     # vllm/entrypoints/openai/speech_to_text.py
     async def _preprocess_speech_to_text(...):
@@ -248,9 +238,9 @@ No extra registration is required beyond having your model class available via t
 
 ## Examples in-tree
 
-- Whisper encoder–decoder (audio-only): [vllm/model_executor/models/whisper.py](../../../vllm/model_executor/models/whisper.py)
-- Voxtral decoder-only (audio embeddings + LLM): [vllm/model_executor/models/voxtral.py](../../../vllm/model_executor/models/voxtral.py). Make sure to have installed `mistral-common[audio]`.
-- Gemma3n decoder-only with fixed instruction prompt: [vllm/model_executor/models/gemma3n_mm.py](../../../vllm/model_executor/models/gemma3n_mm.py)
+- Whisper encoder–decoder (audio-only): <gh-file:vllm/model_executor/models/whisper.py>
+- Voxtral decoder-only (audio embeddings + LLM): <gh-file:vllm/model_executor/models/voxtral.py>
+- Gemma3n decoder-only with fixed instruction prompt: <gh-file:vllm/model_executor/models/gemma3n_mm.py>
 
 ## Test with the API
 
@@ -278,7 +268,7 @@ Once your model implements `SupportsTranscription`, you can test the endpoints (
       http://localhost:8000/v1/audio/translations
     ```
 
-Or check out more examples in [examples/online_serving](../../../examples/online_serving).
+Or check out more examples in <gh-file:examples/online_serving>.
 
 !!! note
     - If your model handles chunking internally (e.g., via its processor or encoder), set `min_energy_split_window_size=None` in the returned `SpeechToTextConfig` to disable server-side chunking.

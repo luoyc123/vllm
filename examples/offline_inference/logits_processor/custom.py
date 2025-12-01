@@ -33,7 +33,7 @@ Output:    ' in the hands of the people.\n\nThe future of AI is in the'
 ------------------------------------------------------------
 """
 
-from typing import Any
+from typing import Optional
 
 import torch
 
@@ -50,16 +50,6 @@ from vllm.v1.sample.logits_processor.builtin import process_dict_updates
 class DummyLogitsProcessor(LogitsProcessor):
     """Fake logit processor to support unit testing and examples"""
 
-    @classmethod
-    def validate_params(cls, params: SamplingParams):
-        target_token: Any | None = params.extra_args and params.extra_args.get(
-            "target_token"
-        )
-        if target_token is not None and not isinstance(target_token, int):
-            raise ValueError(
-                f"target_token value {target_token} {type(target_token)} is not int"
-            )
-
     def __init__(
         self, vllm_config: VllmConfig, device: torch.device, is_pin_memory: bool
     ):
@@ -68,18 +58,15 @@ class DummyLogitsProcessor(LogitsProcessor):
     def is_argmax_invariant(self) -> bool:
         return False
 
-    def update_state(self, batch_update: BatchUpdate | None):
-        def extract_extra_arg(params: SamplingParams) -> int | None:
-            self.validate_params(params)
-            return params.extra_args and params.extra_args.get("target_token")
-
+    def update_state(self, batch_update: Optional[BatchUpdate]):
         process_dict_updates(
             self.req_info,
             batch_update,
             # This function returns the LP's per-request state based on the
             # request details, or None if this LP does not apply to the
             # request.
-            lambda params, _, __: extract_extra_arg(params),
+            lambda params, _, __: params.extra_args
+            and (params.extra_args.get("target_token")),
         )
 
     def apply(self, logits: torch.Tensor) -> torch.Tensor:

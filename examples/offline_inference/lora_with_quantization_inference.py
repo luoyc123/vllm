@@ -8,6 +8,7 @@ Requires HuggingFace credentials for access.
 """
 
 import gc
+from typing import Optional
 
 import torch
 from huggingface_hub import snapshot_download
@@ -18,7 +19,7 @@ from vllm.lora.request import LoRARequest
 
 def create_test_prompts(
     lora_path: str,
-) -> list[tuple[str, SamplingParams, LoRARequest | None]]:
+) -> list[tuple[str, SamplingParams, Optional[LoRARequest]]]:
     return [
         # this is an example of using quantization without LoRA
         (
@@ -55,7 +56,7 @@ def create_test_prompts(
 
 def process_requests(
     engine: LLMEngine,
-    test_prompts: list[tuple[str, SamplingParams, LoRARequest | None]],
+    test_prompts: list[tuple[str, SamplingParams, Optional[LoRARequest]]],
 ):
     """Continuously process a list of prompts and handle the outputs."""
     request_id = 0
@@ -77,7 +78,7 @@ def process_requests(
 
 
 def initialize_engine(
-    model: str, quantization: str, lora_repo: str | None
+    model: str, quantization: str, lora_repo: Optional[str]
 ) -> LLMEngine:
     """Initialize the LLMEngine."""
 

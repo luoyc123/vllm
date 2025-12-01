@@ -7,11 +7,12 @@ import dataclasses
 import json
 import random
 import time
+from typing import Optional
 
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from vllm.engine.arg_utils import EngineArgs
-from vllm.utils.argparse_utils import FlexibleArgumentParser
+from vllm.utils import FlexibleArgumentParser
 
 
 # Select a equi-probable random priority
@@ -23,7 +24,7 @@ def sample_requests(
     dataset_path: str,
     num_requests: int,
     tokenizer: PreTrainedTokenizerBase,
-    fixed_output_len: int | None,
+    fixed_output_len: Optional[int],
 ) -> list[tuple[str, int, int, int]]:
     if fixed_output_len is not None and fixed_output_len < 4:
         raise ValueError("output_len too small")

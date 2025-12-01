@@ -13,7 +13,7 @@ from datetime import datetime
 from enum import Enum
 from http import HTTPStatus
 from statistics import mean
-from typing import NamedTuple
+from typing import NamedTuple, Optional, Union
 
 import aiohttp  # type: ignore
 import numpy as np  # type: ignore
@@ -46,16 +46,15 @@ class ConversationSampling(str, Enum):
 
 class ClientArgs(NamedTuple):
     seed: int
-    max_num_requests: int | None
+    max_num_requests: Optional[int]
     skip_first_turn: bool
-    max_turns: int | None
+    max_turns: Optional[int]
     max_active_conversations: int
     verbose: bool
     print_content: bool
     verify_output: bool
     conversation_sampling: ConversationSampling
     request_rate: float
-    max_retries: int
 
 
 class RequestArgs(NamedTuple):
@@ -64,7 +63,6 @@ class RequestArgs(NamedTuple):
     stream: bool
     limit_min_tokens: int  # Use negative value for no limit
     limit_max_tokens: int  # Use negative value for no limit
-    timeout_sec: int
 
 
 class BenchmarkArgs(NamedTuple):
@@ -111,9 +109,9 @@ class RequestStats(NamedTuple):
 
 class MetricStats:
     def __init__(self) -> None:
-        self.min: float | None = None
-        self.max: float | None = None
-        self.avg: float | None = None
+        self.min: Optional[float] = None
+        self.max: Optional[float] = None
+        self.avg: Optional[float] = None
         self.sum = 0.0
         self.count = 0
 
@@ -145,7 +143,7 @@ class MovingAverage:
         self.index = 0
         self.sum = 0.0
         self.count = 0
-        self.avg: float | None = None
+        self.avg: Optional[float] = None
 
     def update(self, new_value: float) -> None:
         if self.count < self.window_size:
@@ -171,7 +169,7 @@ class MovingAverage:
 class DebugStats:
     def __init__(self, logger: logging.Logger, window_size: int) -> None:
         self.logger = logger
-        self.metrics: dict[str, MovingAverage | MetricStats] = {
+        self.metrics: dict[str, Union[MovingAverage, MetricStats]] = {
             "moving_avg_ttft_ms": MovingAverage(window_size),
             "moving_avg_tpot_ms": MovingAverage(window_size),
             "ttft_ms": MetricStats(),
@@ -200,6 +198,14 @@ class DebugStats:
         self.logger.info("-" * 50)
 
 
+# Must support Python 3.8, we can't use str.removeprefix(prefix)
+# introduced in Python 3.9
+def remove_prefix(text: str, prefix: str) -> str:
+    if text.startswith(prefix):
+        return text[len(prefix) :]
+    return text
+
+
 def nanosec_to_millisec(value: float) -> float:
     return value / 1000000.0
 
@@ -214,9 +220,8 @@ async def send_request(
     chat_url: str,
     model: str,
     stream: bool = True,
-    min_tokens: int | None = None,
-    max_tokens: int | None = None,
-    timeout_sec: int = 120,
+    min_tokens: Optional[int] = None,
+    max_tokens: Optional[int] = None,
 ) -> ServerResponse:
     payload = {
         "model": model,
@@ -238,22 +243,16 @@ async def send_request(
     headers = {"Content-Type": "application/json"}
 
     # Calculate the timeout for the request
+    timeout_sec = 120
     if max_tokens is not None:
         # Assume TPOT of 200ms and use max_tokens to determine timeout
-        token_based_timeout = int(max_tokens * 0.2)
-        if token_based_timeout > timeout_sec:
-            timeout_sec = token_based_timeout
-            logger.info(
-                "Using timeout of %ds based on max_tokens %d",
-                timeout_sec,
-                max_tokens,
-            )
+        timeout_sec = max(timeout_sec, int(max_tokens * 0.2))
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
 
     valid_response = True
-    ttft: float | None = None
+    ttft: Optional[float] = None
     chunk_delay: list[int] = []
-    latency: float | None = None
+    latency: Optional[float] = None
     first_chunk = ""
     generated_text = ""
 
@@ -270,7 +269,7 @@ async def send_request(
                 if not chunk_bytes:
                     continue
 
-                chunk = chunk_bytes.decode("utf-8").removeprefix("data: ")
+                chunk = remove_prefix(chunk_bytes.decode("utf-8"), "data: ")
                 if chunk == "[DONE]":
                     # End of stream
                     latency = time.perf_counter_ns() - start_time
@@ -365,7 +364,7 @@ async def send_turn(
     req_args: RequestArgs,
     verbose: bool,
     verify_output: bool,
-) -> RequestStats | None:
+) -> Optional[RequestStats]:
     assert messages_to_use > 0
     assert messages_to_use <= len(conversation_messages)
 
@@ -418,7 +417,6 @@ async def send_turn(
         req_args.stream,
         min_tokens,
         max_tokens,
-        req_args.timeout_sec,
     )
 
     if response.valid is False:
@@ -528,25 +526,6 @@ async def poisson_sleep(request_rate: float, verbose: bool = False) -> None:
     await asyncio.sleep(interval)
 
 
-async def exponential_backoff_sleep(
-    attempt_cnt: int,
-    base_rate: float = 1.0,
-    backoff_factor: float = 2.0,
-    jitter_fraction: float = 0.10,
-    verbose: bool = False,
-) -> None:
-    # Sleep with exponential backoff and jitter after a failed request.
-    backoff_delay = base_rate * (backoff_factor**attempt_cnt)
-    jittered_delay = backoff_delay * (
-        1 + np.random.uniform(-jitter_fraction, jitter_fraction)
-    )
-
-    if verbose:
-        logger.info(f"Backoff for {jittered_delay:.3f} seconds...")
-
-    await asyncio.sleep(jittered_delay)
-
-
 async def client_main(
     args: ClientArgs,
     req_args: RequestArgs,
@@ -561,11 +540,8 @@ async def client_main(
         f"{Color.CYAN}Started client {client_id}: max_num_requests={args.max_num_requests}, max_active_conversations={args.max_active_conversations}{Color.RESET}"  # noqa: E501
     )
 
-    # Set unique seed per client (each client runs in its own process)
-    # Add 1 to ensure no client uses the same seed as the main process
-    client_seed = args.seed + client_id + 1
-    random.seed(client_seed)
-    np.random.seed(client_seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
 
     # Active conversations
     active_convs: ConversationsMap = {}
@@ -668,7 +644,7 @@ async def client_main(
 
             if args.verbose:
                 curr_time_sec: float = time.perf_counter()
-                time_since_last_turn: str | float = "N/A"
+                time_since_last_turn: Union[str, float] = "N/A"
                 if conv_id in time_of_last_turn:
                     time_since_last_turn = round(
                         curr_time_sec - time_of_last_turn[conv_id], 3
@@ -678,62 +654,49 @@ async def client_main(
                 )
                 time_of_last_turn[conv_id] = curr_time_sec
 
-            success = False
-            for attempt_cnt in range(args.max_retries + 1):
-                try:
-                    exception = False
-                    result = await send_turn(
-                        session,
-                        client_id,
-                        conv_id,
-                        messages,
-                        current_turn,
-                        tokenizer,
-                        req_args,
-                        args.print_content,
-                        args.verify_output,
-                    )
-                    if result is not None:
-                        result_queue.put(result)
-                        success = True
-                        break
-                    else:
-                        logger.warning(
-                            f"{Color.YELLOW}Client {client_id} - Request rejected during conversation ID {conv_id} (turn: {current_turn}){Color.RESET}"  # noqa: E501
-                        )
-                except asyncio.exceptions.TimeoutError:
-                    exception = True
-                    logger.error(
-                        "%sClient %d - Timeout during conversation ID %s (turn: %d). "
-                        "Base timeout is %ss (set with --request-timeout-sec), but the "
-                        "effective timeout may be longer based on max_tokens. If this "
-                        "is unexpected, consider increasing the timeout or checking "
-                        "model performance.%s",
-                        Color.RED,
-                        client_id,
-                        conv_id,
-                        current_turn,
-                        req_args.timeout_sec,
-                        Color.RESET,
-                    )
-                except Exception:
-                    exception = True
-                    logger.exception(
-                        f"{Color.RED}Client {client_id} - Exception during conversation ID {conv_id} (turn: {current_turn}){Color.RESET}"  # noqa: E501
+            success = True
+            try:
+                result = await send_turn(
+                    session,
+                    client_id,
+                    conv_id,
+                    messages,
+                    current_turn,
+                    tokenizer,
+                    req_args,
+                    args.print_content,
+                    args.verify_output,
+                )
+                if result is not None:
+                    result_queue.put(result)
+                else:
+                    # None means that the request failed,
+                    # and should not be added to the statistics.
+                    success = False
+                    num_failures += 1
+
+                    logger.warning(
+                        f"{Color.YELLOW}Client {client_id} - Request rejected during conversation ID {conv_id} (turn: {current_turn}){Color.RESET}"  # noqa: E501
                     )
 
-                # Sleep before retry if not last attempt
-                if not success and attempt_cnt < args.max_retries:
-                    await exponential_backoff_sleep(attempt_cnt, verbose=args.verbose)
+                    # Remove the conversation (should not be used again)
+                    active_convs.pop(conv_id)
 
-            if not success:
+            except asyncio.exceptions.TimeoutError:
                 num_failures += 1
-                # Remove the conversation (should not be used again)
-                active_convs.pop(conv_id)
-                if exception:
-                    break  # Exit gracefully instead of raising an error
+                logger.exception(
+                    f"{Color.RED}Client {client_id} - Timeout during conversation ID {conv_id} (turn: {current_turn}){Color.RESET}"  # noqa: E501
+                )
+                break  # Exit gracefully instead of raising an error
 
-            else:
+            except Exception:
+                num_failures += 1
+                logger.exception(
+                    f"{Color.RED}Client {client_id} - Exception during conversation ID {conv_id} (turn: {current_turn}){Color.RESET}"  # noqa: E501
+                )
+                break  # Exit gracefully instead of raising an error
+
+            if success:
                 num_successes += 1
 
                 # Update the turns counter to include the LLM response
@@ -806,7 +769,7 @@ def get_client_config(
             "Number of conversations must be equal or larger than the number of clients"
         )
 
-    max_req_per_client: int | None = None
+    max_req_per_client: Optional[int] = None
     if args.max_num_requests is not None:
         # Max number of requests per client
         req_per_client = args.max_num_requests // args.num_clients
@@ -848,7 +811,6 @@ def get_client_config(
         verify_output=args.verify_output,
         conversation_sampling=args.conversation_sampling,
         request_rate=args.request_rate,
-        max_retries=args.max_retries,
     )
 
     if args.limit_min_tokens > 0 or args.limit_max_tokens > 0:
@@ -861,9 +823,6 @@ def get_client_config(
                 "Invalid min/max tokens limits (min should not be larger than max)"
             )
 
-    if args.request_timeout_sec <= 0:
-        raise ValueError("Request timeout must be a positive number")
-
     # Arguments for API requests
     chat_url = f"{args.url}/v1/chat/completions"
     model_name = args.served_model_name if args.served_model_name else args.model
@@ -874,7 +833,6 @@ def get_client_config(
         stream=not args.no_stream,
         limit_min_tokens=args.limit_min_tokens,
         limit_max_tokens=args.limit_max_tokens,
-        timeout_sec=args.request_timeout_sec,
     )
 
     return client_args, req_args
@@ -978,13 +936,13 @@ async def main_mp(
                     f"{num_clients_finished} out of {bench_args.num_clients} clients finished, collected {len(client_metrics)} measurements, runtime {runtime_sec:.3f} sec{Color.RESET}"  # noqa: E501
                 )
 
-                rps: str | float = round(len(client_metrics) / runtime_sec, 3)
+                rps: Union[str, float] = round(len(client_metrics) / runtime_sec, 3)
                 if len(client_metrics) < (5 * bench_args.num_clients):
                     # Do not estimate the RPS if the number of samples is very low
                     # (threshold can be tuned if needed)
                     rps = "N/A"
 
-                runtime_left_sec: str | float = round(
+                runtime_left_sec: Union[str, float] = round(
                     (runtime_sec / finished_convs) * (total_convs - finished_convs), 3
                 )
                 if percent < 0.05:
@@ -1018,7 +976,7 @@ async def main_mp(
             f"(is alive: {client.is_alive()}){Color.RESET}"
         )
 
-        client.join(timeout=req_args.timeout_sec + 1)
+        client.join(timeout=120)
 
         if client.is_alive():
             logger.warning(
@@ -1074,9 +1032,8 @@ def process_statistics(
     warmup_percentages: list[float],
     test_params: dict,
     verbose: bool,
-    gen_conv_args: GenConvArgs | None = None,
+    gen_conv_args: Optional[GenConvArgs] = None,
     excel_output: bool = False,
-    warmup_runtime_sec: float | None = None,
 ) -> None:
     if len(client_metrics) == 0:
         logger.info("No samples to process")
@@ -1170,13 +1127,8 @@ def process_statistics(
         # Convert milliseconds to seconds
         runtime_sec = runtime_sec / 1000.0
         requests_per_sec = float(len(df)) / runtime_sec
-        params = {
-            "runtime_sec": runtime_sec,
-            "requests_per_sec": requests_per_sec,
-        }
-        if warmup_runtime_sec is not None:
-            params["warmup_runtime_sec"] = warmup_runtime_sec
-            params["total_runtime_incl_warmup_sec"] = runtime_sec + warmup_runtime_sec
+
+        params = {"runtime_sec": runtime_sec, "requests_per_sec": requests_per_sec}
 
         # Generate a summary of relevant metrics (and drop irrelevant data)
         df = df.drop(columns=exclude).describe(percentiles=percentiles).transpose()
@@ -1307,7 +1259,7 @@ async def main() -> None:
         default=None,
         help="The model name used in the API. "
         "If not specified, the model name will be the "
-        "same as the `--model` argument. ",
+        "same as the ``--model`` argument. ",
     )
 
     parser.add_argument(
@@ -1391,16 +1343,6 @@ async def main() -> None:
         "Set to 0 for no delay between requests.",
     )
     parser.add_argument(
-        "--max-retries",
-        type=int,
-        default=int(os.environ.get("MULTITURN_BENCH_MAX_RETRIES", "0")),
-        help="Maximum number of retry attempts for timed-out requests. "
-        "Default is 0 (no retries). "
-        "Set to higher values to retry failed requests and maintain "
-        "fair workload distribution. "
-        "Can also be set via MULTITURN_BENCH_MAX_RETRIES environment variable.",
-    )
-    parser.add_argument(
         "--conversation-sampling",
         type=ConversationSampling,
         choices=list(ConversationSampling),
@@ -1416,13 +1358,6 @@ async def main() -> None:
         default=False,
         action="store_true",
         help="Verify the LLM output (compare to the answers in the input JSON file)",
-    )
-    parser.add_argument(
-        "--request-timeout-sec",
-        type=int,
-        default=120,
-        help="Timeout in seconds for each API request (default: 120). "
-        "Automatically increased if max tokens imply longer decoding.",
     )
 
     parser.add_argument(
@@ -1499,10 +1434,11 @@ async def main() -> None:
             f"Invalid --warmup-percentage={args.warmup_percentage}"
         ) from None
 
-    # Set global seeds for main process
     random.seed(args.seed)
     np.random.seed(args.seed)
 
+    if not os.path.exists(args.model):
+        raise OSError(f"Path does not exist: {args.model}")
     logger.info("Loading tokenizer")
     tokenizer = AutoTokenizer.from_pretrained(args.model)
 
@@ -1558,8 +1494,6 @@ async def main() -> None:
         url=args.url, num_clients=args.num_clients, early_stop=not args.no_early_stop
     )
 
-    warmup_runtime_sec: float | None = None
-
     # Warm-up step
     if args.warmup_step:
         # Only send a single user prompt from every conversation.
@@ -1574,56 +1508,26 @@ async def main() -> None:
         # all clients should finish their work before exiting
         warmup_bench_args = bench_args._replace(early_stop=False)
 
-        logger.info("%sWarmup start%s", Color.PURPLE, Color.RESET)
-        warmup_start_ns = time.perf_counter_ns()
+        logger.info(f"{Color.PURPLE}Warmup start{Color.RESET}")
         conversations, _ = await main_mp(
             warmup_client_args, req_args, warmup_bench_args, tokenizer, conversations
         )
-        warmup_runtime_sec = nanosec_to_sec(time.perf_counter_ns() - warmup_start_ns)
-        logger.info(
-            "%sWarmup runtime: %.3f sec (%.3f ms)%s",
-            Color.PURPLE,
-            warmup_runtime_sec,
-            warmup_runtime_sec * 1000,
-            Color.RESET,
-        )
-        logger.info("%sWarmup done%s", Color.PURPLE, Color.RESET)
+        logger.info(f"{Color.PURPLE}Warmup done{Color.RESET}")
 
     # Run the benchmark
-    benchmark_start_ns = time.perf_counter_ns()
+    start_time = time.perf_counter_ns()
     client_convs, client_metrics = await main_mp(
         client_args, req_args, bench_args, tokenizer, conversations
     )
-    benchmark_runtime_sec = nanosec_to_sec(time.perf_counter_ns() - benchmark_start_ns)
+    total_runtime_ms = nanosec_to_millisec(time.perf_counter_ns() - start_time)
 
     # Calculate requests per second
-    requests_per_sec = len(client_metrics) / benchmark_runtime_sec
-    benchmark_runtime_ms = benchmark_runtime_sec * 1000.0
+    total_runtime_sec = total_runtime_ms / 1000.0
+    rps = len(client_metrics) / total_runtime_sec
     logger.info(
-        "%sAll clients finished, benchmark runtime: %.3f sec (%.3f ms), "
-        "requests per second: %.3f%s",
-        Color.GREEN,
-        benchmark_runtime_sec,
-        benchmark_runtime_ms,
-        requests_per_sec,
-        Color.RESET,
+        f"{Color.GREEN}All clients finished, total runtime: {total_runtime_sec:.3f} sec"
+        f" ({total_runtime_ms:.3f} ms), requests per second: {rps:.3f}{Color.RESET}"
     )
-    if warmup_runtime_sec is not None:
-        total_runtime_sec = benchmark_runtime_sec + warmup_runtime_sec
-        logger.info(
-            "%sWarmup runtime: %.3f sec (%.3f ms)%s",
-            Color.GREEN,
-            warmup_runtime_sec,
-            warmup_runtime_sec * 1000,
-            Color.RESET,
-        )
-        logger.info(
-            "%sTotal runtime (including warmup): %.3f sec (%.3f ms)%s",
-            Color.GREEN,
-            total_runtime_sec,
-            total_runtime_sec * 1000,
-            Color.RESET,
-        )
 
     # Benchmark parameters
     params = {
@@ -1648,7 +1552,6 @@ async def main() -> None:
         verbose=args.verbose,
         gen_conv_args=gen_conv_args,
         excel_output=args.excel_output,
-        warmup_runtime_sec=warmup_runtime_sec,
     )
 
     if args.output_file is not None:

@@ -14,15 +14,20 @@ from vllm.platforms import current_platform
 
 @pytest.mark.parametrize("num_tokens", [1, 16, 64, 128, 256, 512, 1024])
 @pytest.mark.parametrize("hidden_size", [128, 256, 512, 1024, 2048, 4096])
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
-def test_shuffle_rows_basic(num_tokens: int, hidden_size: int, dtype: torch.dtype):
+@pytest.mark.parametrize("dtype",
+                         [torch.float16, torch.bfloat16, torch.float32])
+def test_shuffle_rows_basic(num_tokens: int, hidden_size: int,
+                            dtype: torch.dtype):
     """Test basic functionality of shuffle_rows with various tensor sizes and
     dtypes."""
     if not current_platform.is_cuda():
         pytest.skip("shuffle_rows requires CUDA")
 
     # Create input tensor
-    input_tensor = torch.randn(num_tokens, hidden_size, device="cuda", dtype=dtype)
+    input_tensor = torch.randn(num_tokens,
+                               hidden_size,
+                               device="cuda",
+                               dtype=dtype)
 
     # Create a simple permutation map (identity mapping)
     dst2src_map = torch.arange(num_tokens, device="cuda", dtype=torch.int32)
@@ -42,18 +47,24 @@ def test_shuffle_rows_basic(num_tokens: int, hidden_size: int, dtype: torch.dtyp
 @pytest.mark.parametrize("num_tokens", [16, 64, 128])
 @pytest.mark.parametrize("hidden_size", [128, 512, 1024])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-def test_shuffle_rows_permutation(
-    num_tokens: int, hidden_size: int, dtype: torch.dtype
-):
+def test_shuffle_rows_permutation(num_tokens: int, hidden_size: int,
+                                  dtype: torch.dtype):
     """Test shuffle_rows with actual permutation."""
     if not current_platform.is_cuda():
         pytest.skip("shuffle_rows requires CUDA")
 
     # Create input tensor
-    input_tensor = torch.randn(num_tokens, hidden_size, device="cuda", dtype=dtype)
+    input_tensor = torch.randn(num_tokens,
+                               hidden_size,
+                               device="cuda",
+                               dtype=dtype)
 
     # Create a reverse permutation map
-    dst2src_map = torch.arange(num_tokens - 1, -1, -1, device="cuda", dtype=torch.int32)
+    dst2src_map = torch.arange(num_tokens - 1,
+                               -1,
+                               -1,
+                               device="cuda",
+                               dtype=torch.int32)
 
     # Test shuffle_rows
     output = shuffle_rows(input_tensor, dst2src_map)
@@ -79,13 +90,17 @@ def test_shuffle_rows_expansion(num_tokens: int, hidden_size: int):
     dtype = torch.float16
 
     # Create input tensor
-    input_tensor = torch.randn(num_tokens, hidden_size, device="cuda", dtype=dtype)
+    input_tensor = torch.randn(num_tokens,
+                               hidden_size,
+                               device="cuda",
+                               dtype=dtype)
 
     # Create a mapping that duplicates some tokens (expansion)
     expanded_size = num_tokens * 2
-    dst2src_map = torch.randint(
-        0, num_tokens, (expanded_size,), device="cuda", dtype=torch.int32
-    )
+    dst2src_map = torch.randint(0,
+                                num_tokens, (expanded_size, ),
+                                device="cuda",
+                                dtype=torch.int32)
 
     # Test shuffle_rows
     output = shuffle_rows(input_tensor, dst2src_map)
@@ -98,9 +113,10 @@ def test_shuffle_rows_expansion(num_tokens: int, hidden_size: int):
     # Verify that each output row matches the corresponding input row
     for i in range(expanded_size):
         src_idx = dst2src_map[i].item()
-        torch.testing.assert_close(
-            output[i], input_tensor[src_idx], atol=1e-6, rtol=1e-5
-        )
+        torch.testing.assert_close(output[i],
+                                   input_tensor[src_idx],
+                                   atol=1e-6,
+                                   rtol=1e-5)
 
 
 @pytest.mark.parametrize("num_tokens", [16, 64])
@@ -116,7 +132,10 @@ def test_shuffle_rows_random_permutation(num_tokens: int, hidden_size: int):
     torch.manual_seed(42)
 
     # Create input tensor
-    input_tensor = torch.randn(num_tokens, hidden_size, device="cuda", dtype=dtype)
+    input_tensor = torch.randn(num_tokens,
+                               hidden_size,
+                               device="cuda",
+                               dtype=dtype)
 
     # Create a random permutation map
     dst2src_map = torch.randperm(num_tokens, device="cuda", dtype=torch.int32)
@@ -132,9 +151,10 @@ def test_shuffle_rows_random_permutation(num_tokens: int, hidden_size: int):
     # Verify that each output row matches the corresponding input row
     for i in range(num_tokens):
         src_idx = dst2src_map[i].item()
-        torch.testing.assert_close(
-            output[i], input_tensor[src_idx], atol=1e-6, rtol=1e-5
-        )
+        torch.testing.assert_close(output[i],
+                                   input_tensor[src_idx],
+                                   atol=1e-6,
+                                   rtol=1e-5)
 
 
 def test_shuffle_rows_edge_cases():
@@ -168,7 +188,10 @@ def test_shuffle_rows_moe_like_scenario():
     topk = 2
 
     # Simulate input tokens
-    input_tensor = torch.randn(batch_size, hidden_size, device="cuda", dtype=dtype)
+    input_tensor = torch.randn(batch_size,
+                               hidden_size,
+                               device="cuda",
+                               dtype=dtype)
 
     # Simulate expert assignment (each token goes to topk experts)
     # This creates a mapping where tokens are duplicated for multiple experts
@@ -192,12 +215,14 @@ def test_shuffle_rows_moe_like_scenario():
     for i in range(batch_size):
         for k in range(topk):
             output_idx = i * topk + k
-            torch.testing.assert_close(
-                output[output_idx], input_tensor[i], atol=1e-6, rtol=1e-5
-            )
+            torch.testing.assert_close(output[output_idx],
+                                       input_tensor[i],
+                                       atol=1e-6,
+                                       rtol=1e-5)
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize("dtype",
+                         [torch.float16, torch.bfloat16, torch.float32])
 def test_shuffle_rows_dtype_consistency(dtype: torch.dtype):
     """Test that shuffle_rows preserves dtype correctly."""
     if not current_platform.is_cuda():
@@ -207,7 +232,10 @@ def test_shuffle_rows_dtype_consistency(dtype: torch.dtype):
     hidden_size = 512
 
     # Create input tensor with specific dtype
-    input_tensor = torch.randn(num_tokens, hidden_size, device="cuda", dtype=dtype)
+    input_tensor = torch.randn(num_tokens,
+                               hidden_size,
+                               device="cuda",
+                               dtype=dtype)
     dst2src_map = torch.arange(num_tokens, device="cuda", dtype=torch.int32)
 
     # Test shuffle_rows
@@ -229,7 +257,10 @@ def test_shuffle_rows_device_consistency():
     dtype = torch.float16
 
     # Create input tensor on CUDA
-    input_tensor = torch.randn(num_tokens, hidden_size, device="cuda", dtype=dtype)
+    input_tensor = torch.randn(num_tokens,
+                               hidden_size,
+                               device="cuda",
+                               dtype=dtype)
     dst2src_map = torch.arange(num_tokens, device="cuda", dtype=torch.int32)
 
     # Test shuffle_rows
@@ -250,7 +281,10 @@ def test_shuffle_rows_contiguous_output():
     dtype = torch.float16
 
     # Create input tensor
-    input_tensor = torch.randn(num_tokens, hidden_size, device="cuda", dtype=dtype)
+    input_tensor = torch.randn(num_tokens,
+                               hidden_size,
+                               device="cuda",
+                               dtype=dtype)
     dst2src_map = torch.arange(num_tokens, device="cuda", dtype=torch.int32)
 
     # Test shuffle_rows

@@ -2,20 +2,11 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import copy
 
-import pytest
-
 from vllm.v1.outputs import EMPTY_MODEL_RUNNER_OUTPUT, KVConnectorOutput
 from vllm.v1.request import FinishReason, RequestStatus
 
-from .utils import (
-    assert_scheduler_empty,
-    create_model_runner_output,
-    create_request,
-    create_scheduler,
-    create_vllm_config,
-)
-
-pytestmark = pytest.mark.cpu_test
+from .utils import (assert_scheduler_empty, create_model_runner_output,
+                    create_request, create_scheduler, create_vllm_config)
 
 
 def test_basic_lifecycle():
@@ -29,15 +20,12 @@ def test_basic_lifecycle():
     NUM_EXTERNAL_FULL_BLOCKS = 2
     NUM_TOKENS = int(BLOCK_SIZE * (NUM_EXTERNAL_FULL_BLOCKS + 0.5))
     START_FREE_BLOCK_QUEUE_SIZE = (
-        scheduler.kv_cache_manager.block_pool.free_block_queue.num_free_blocks
-    )
+        scheduler.kv_cache_manager.block_pool.free_block_queue.num_free_blocks)
 
-    request = create_request(
-        request_id=1,
-        block_size=BLOCK_SIZE,
-        num_tokens=NUM_TOKENS,
-        do_remote_prefill=True,
-    )
+    request = create_request(request_id=1,
+                             block_size=BLOCK_SIZE,
+                             num_tokens=NUM_TOKENS,
+                             do_remote_prefill=True)
 
     scheduler.add_request(request)
     request_id = request.request_id
@@ -56,16 +44,16 @@ def test_basic_lifecycle():
     # Req waiting for KVs with no computed/scheduled toks ...
     assert len(scheduler.waiting) == 1
     assert request in scheduler.waiting
-    assert request.status == RequestStatus.WAITING_FOR_REMOTE_KVS
-    assert request.num_computed_tokens == 0
+    assert (request.status == RequestStatus.WAITING_FOR_REMOTE_KVS)
+    assert (request.num_computed_tokens == 0)
 
     # ... but should have (uncached) blocks allocated to it.
     block_pool = scheduler.kv_cache_manager.block_pool
-    assert block_pool.free_block_queue.num_free_blocks < START_FREE_BLOCK_QUEUE_SIZE
+    assert (block_pool.free_block_queue.num_free_blocks
+            < START_FREE_BLOCK_QUEUE_SIZE)
     assert len(block_pool.cached_block_hash_to_block) == 0
     blocks = scheduler.kv_cache_manager.coordinator.single_type_managers[
-        0
-    ].req_to_blocks[request_id]
+        0].req_to_blocks[request_id]
     for block in blocks:
         assert block._block_hash is None
 
@@ -73,9 +61,8 @@ def test_basic_lifecycle():
     model_runner_output = EMPTY_MODEL_RUNNER_OUTPUT
 
     # (1c): update_from_output()
-    engine_core_outputs = scheduler.update_from_output(
-        scheduler_output, model_runner_output
-    )
+    engine_core_outputs = scheduler.update_from_output(scheduler_output,
+                                                       model_runner_output)
     assert not engine_core_outputs or not engine_core_outputs[0].outputs
 
     # STEP (2):
@@ -87,15 +74,13 @@ def test_basic_lifecycle():
     # (2b): forward(): request finishes recv.
     model_runner_output = copy.deepcopy(EMPTY_MODEL_RUNNER_OUTPUT)
     model_runner_output.kv_connector_output = KVConnectorOutput(
-        finished_recving={request_id}
-    )
+        finished_recving=[request_id])
 
     # (2c): update_from_output():
-    engine_core_outputs = scheduler.update_from_output(
-        scheduler_output, model_runner_output
-    )
+    engine_core_outputs = scheduler.update_from_output(scheduler_output,
+                                                       model_runner_output)
     assert len(scheduler.waiting) == 1
-    assert request_id in scheduler.finished_recving_kv_req_ids
+    assert (request_id in scheduler.finished_recving_kv_req_ids)
 
     # STEP (3):
     # (3a): schedule(): this should actually schedule.
@@ -105,11 +90,10 @@ def test_basic_lifecycle():
     # Confirm the block are actually allocated.
     num_hashed_blocks = 0
     blocks = scheduler.kv_cache_manager.coordinator.single_type_managers[
-        0
-    ].req_to_blocks[request_id]
+        0].req_to_blocks[request_id]
     for block in blocks:
         assert block.ref_cnt == 1
-        num_hashed_blocks += 1 if block._block_hash is not None else 0
+        num_hashed_blocks += (1 if block._block_hash is not None else 0)
     assert num_hashed_blocks == NUM_EXTERNAL_FULL_BLOCKS
 
     # Confirm the rest of the prompt is scheduled in this step.
@@ -117,7 +101,7 @@ def test_basic_lifecycle():
     num_scheduled_tokens = scheduler_output.num_scheduled_tokens[request_id]
     num_computed_tokens = scheduled_req.num_computed_tokens
     total_prompt_tokens = len(scheduled_req.prompt_token_ids)
-    assert num_scheduled_tokens == total_prompt_tokens - num_computed_tokens
+    assert (num_scheduled_tokens == total_prompt_tokens - num_computed_tokens)
 
     # (3b): execute_model()
     model_runner_output = create_model_runner_output([request])
@@ -127,9 +111,8 @@ def test_basic_lifecycle():
     # Step (4): Hit EOS.
     scheduler_output = scheduler.schedule()
     model_runner_output = create_model_runner_output([request], use_eos=True)
-    engine_core_outputs = scheduler.update_from_output(
-        scheduler_output, model_runner_output
-    )
+    engine_core_outputs = scheduler.update_from_output(scheduler_output,
+                                                       model_runner_output)
     scheduler.schedule()
 
     outputs = engine_core_outputs[0].outputs
@@ -150,12 +133,10 @@ def test_interleaved_lifecycle():
     NUM_EXTERNAL_FULL_BLOCKS = 2
     NUM_TOKENS = int(BLOCK_SIZE * (NUM_EXTERNAL_FULL_BLOCKS + 0.5))
 
-    request_remote = create_request(
-        request_id=1,
-        block_size=BLOCK_SIZE,
-        num_tokens=NUM_TOKENS,
-        do_remote_prefill=True,
-    )
+    request_remote = create_request(request_id=1,
+                                    block_size=BLOCK_SIZE,
+                                    num_tokens=NUM_TOKENS,
+                                    do_remote_prefill=True)
     request_local_a = create_request(
         request_id=2,
         block_size=BLOCK_SIZE,
@@ -184,7 +165,8 @@ def test_interleaved_lifecycle():
     assert len(scheduler_output.scheduled_new_reqs) == 1
     assert scheduler_output.scheduled_cached_reqs.num_reqs == 1
 
-    model_runner_output = create_model_runner_output([request_local_a, request_local_b])
+    model_runner_output = create_model_runner_output(
+        [request_local_a, request_local_b])
     scheduler.update_from_output(scheduler_output, model_runner_output)
 
     # STEP 3: continue running, KVs not arrived yet.
@@ -195,8 +177,7 @@ def test_interleaved_lifecycle():
     assert scheduler_output.scheduled_cached_reqs.num_reqs == 2
 
     model_runner_output = create_model_runner_output(
-        reqs=[request_local_a, request_local_b]
-    )
+        reqs=[request_local_a, request_local_b])
     scheduler.update_from_output(scheduler_output, model_runner_output)
     assert len(scheduler.running) == 2
     assert len(scheduler.waiting) == 1
@@ -211,8 +192,8 @@ def test_interleaved_lifecycle():
     assert scheduler_output.scheduled_cached_reqs.num_reqs == 2
 
     model_runner_output = create_model_runner_output(
-        [request_local_a, request_local_b], finished_recving={request_remote.request_id}
-    )
+        [request_local_a, request_local_b],
+        finished_recving=[request_remote.request_id])
     scheduler.update_from_output(scheduler_output, model_runner_output)
 
     # STEP 5: RECVed KVs are sent to ModelRunner.
@@ -223,8 +204,7 @@ def test_interleaved_lifecycle():
     assert scheduler_output.scheduled_cached_reqs.num_reqs == 2
 
     model_runner_output = create_model_runner_output(
-        [request_local_a, request_local_b, request_remote]
-    )
+        [request_local_a, request_local_b, request_remote])
     scheduler.update_from_output(scheduler_output, model_runner_output)
 
     # STEP 6: Hit EOS and free.
@@ -262,16 +242,16 @@ def test_no_spurious_prefix_caching():
         request_id=1,
         block_size=BLOCK_SIZE,
         num_tokens=NUM_TOKENS,
-        common_prefix_len=NUM_TOKENS,
         do_remote_prefill=True,
+        use_all_1s_for_prompt_tokens=True,
     )
 
     request_local = create_request(
         request_id=2,
         block_size=BLOCK_SIZE,
         num_tokens=NUM_TOKENS,
-        common_prefix_len=NUM_TOKENS,
         do_remote_prefill=False,
+        use_all_1s_for_prompt_tokens=True,
     )
 
     # Schedule the remote prefill request. This should not
@@ -289,17 +269,15 @@ def test_no_spurious_prefix_caching():
     assert len(scheduler.waiting) == 1
 
     local_blocks = scheduler.kv_cache_manager.coordinator.single_type_managers[
-        0
-    ].req_to_blocks[request_local.request_id]
+        0].req_to_blocks[request_local.request_id]
     remote_blocks = scheduler.kv_cache_manager.coordinator.single_type_managers[
-        0
-    ].req_to_blocks[request_remote.request_id]
+        0].req_to_blocks[request_remote.request_id]
 
     # Local should have cached blocks (but not all due to preallocate).
     num_hashed_blocks = 0
     for block in local_blocks:
         assert block.ref_cnt == 1
-        num_hashed_blocks += 1 if block._block_hash is not None else 0
+        num_hashed_blocks += (1 if block._block_hash is not None else 0)
     assert num_hashed_blocks > 0
 
     # Remote blocks should not be cached.
@@ -319,12 +297,10 @@ def test_full_block_prompt():
     NUM_EXTERNAL_FULL_BLOCKS = 2
     NUM_TOKENS = int(BLOCK_SIZE * NUM_EXTERNAL_FULL_BLOCKS)
 
-    request = create_request(
-        request_id=1,
-        block_size=BLOCK_SIZE,
-        num_tokens=NUM_TOKENS,
-        do_remote_prefill=True,
-    )
+    request = create_request(request_id=1,
+                             block_size=BLOCK_SIZE,
+                             num_tokens=NUM_TOKENS,
+                             do_remote_prefill=True)
 
     scheduler.add_request(request)
     request_id = request.request_id
@@ -332,11 +308,8 @@ def test_full_block_prompt():
     # STEP (1): Initialize a recv.
     scheduler_output = scheduler.schedule()
     # All blocks should be allocated.
-    num_blocks = len(
-        scheduler.kv_cache_manager.coordinator.single_type_managers[0].req_to_blocks[
-            request_id
-        ]
-    )
+    num_blocks = len(scheduler.kv_cache_manager.coordinator.
+                     single_type_managers[0].req_to_blocks[request_id])
     assert num_blocks == NUM_EXTERNAL_FULL_BLOCKS
     model_runner_output = EMPTY_MODEL_RUNNER_OUTPUT
     scheduler.update_from_output(scheduler_output, model_runner_output)
@@ -345,25 +318,22 @@ def test_full_block_prompt():
     scheduler_output = scheduler.schedule()
     model_runner_output = copy.deepcopy(EMPTY_MODEL_RUNNER_OUTPUT)
     model_runner_output.kv_connector_output = KVConnectorOutput(
-        finished_recving={request_id}
-    )
+        finished_recving=[request_id])
     scheduler.update_from_output(scheduler_output, model_runner_output)
     assert len(scheduler.waiting) == 1
-    assert request_id in scheduler.finished_recving_kv_req_ids
+    assert (request_id in scheduler.finished_recving_kv_req_ids)
 
     # # STEP (3): Run as usual.
     scheduler_output = scheduler.schedule()
 
     # We need to recompute the final token of the prompt to generate
     # the first new token, so we should not have a new block.
-    num_blocks = len(
-        scheduler.kv_cache_manager.coordinator.single_type_managers[0].req_to_blocks[
-            request_id
-        ]
-    )
+    num_blocks = len(scheduler.kv_cache_manager.coordinator.
+                     single_type_managers[0].req_to_blocks[request_id])
     assert num_blocks == NUM_EXTERNAL_FULL_BLOCKS
-    assert scheduler_output.scheduled_new_reqs[0].num_computed_tokens == NUM_TOKENS - 1
-    assert scheduler_output.num_scheduled_tokens[request_id] == 1
+    assert (scheduler_output.scheduled_new_reqs[0].num_computed_tokens ==
+            NUM_TOKENS - 1)
+    assert (scheduler_output.num_scheduled_tokens[request_id] == 1)
 
     model_runner_output = create_model_runner_output([request])
     scheduler.update_from_output(scheduler_output, model_runner_output)
@@ -371,9 +341,8 @@ def test_full_block_prompt():
     # # Step (4): Hit EOS.
     scheduler_output = scheduler.schedule()
     model_runner_output = create_model_runner_output([request], use_eos=True)
-    engine_core_outputs = scheduler.update_from_output(
-        scheduler_output, model_runner_output
-    )
+    engine_core_outputs = scheduler.update_from_output(scheduler_output,
+                                                       model_runner_output)
     scheduler.schedule()
 
     outputs = engine_core_outputs[0].outputs
@@ -402,15 +371,13 @@ def test_cannot_schedule_after_recv():
     NUM_TOKENS_LOCAL = int(BLOCK_SIZE * NUM_PROMPT_BLOCKS)
     NUM_TOKENS_REMOTE = int(BLOCK_SIZE * NUM_PROMPT_BLOCKS)
 
-    request_normal = create_request(
-        request_id=1, block_size=BLOCK_SIZE, num_tokens=NUM_TOKENS_LOCAL
-    )
-    request_remote = create_request(
-        request_id=2,
-        block_size=BLOCK_SIZE,
-        num_tokens=NUM_TOKENS_REMOTE,
-        do_remote_prefill=True,
-    )
+    request_normal = create_request(request_id=1,
+                                    block_size=BLOCK_SIZE,
+                                    num_tokens=NUM_TOKENS_LOCAL)
+    request_remote = create_request(request_id=2,
+                                    block_size=BLOCK_SIZE,
+                                    num_tokens=NUM_TOKENS_REMOTE,
+                                    do_remote_prefill=True)
 
     # STEP 1: 3 blocks are in use (2 for prompt, 1 for decode).
     scheduler.add_request(request_normal)
@@ -431,8 +398,7 @@ def test_cannot_schedule_after_recv():
     # Step 3: finish recving (5 blocks in use)
     scheduler_output = scheduler.schedule()
     model_runner_output = create_model_runner_output(
-        reqs=[request_normal], finished_recving={request_remote.request_id}
-    )
+        reqs=[request_normal], finished_recving=[request_remote.request_id])
     scheduler.update_from_output(scheduler_output, model_runner_output)
     assert len(scheduler.running) == 1
     assert len(scheduler.waiting) == 1
@@ -441,8 +407,7 @@ def test_cannot_schedule_after_recv():
     # because the transfer is completed.
     scheduler_output = scheduler.schedule()
     model_runner_output = create_model_runner_output(
-        reqs=[request_normal, request_remote]
-    )
+        reqs=[request_normal, request_remote])
     scheduler.update_from_output(scheduler_output, model_runner_output)
     assert len(scheduler.running) == 2
     assert len(scheduler.waiting) == 0
@@ -457,9 +422,8 @@ def test_cannot_schedule_after_recv():
 
     # Step 6: finish the request, free it.
     scheduler_output = scheduler.schedule()
-    model_runner_output = create_model_runner_output(
-        reqs=[request_normal], use_eos=True
-    )
+    model_runner_output = create_model_runner_output(reqs=[request_normal],
+                                                     use_eos=True)
     scheduler.update_from_output(scheduler_output, model_runner_output)
     assert len(scheduler.running) == 0
     assert len(scheduler.waiting) == 1
@@ -468,19 +432,16 @@ def test_cannot_schedule_after_recv():
     # request is retrieved from preempted list.
     scheduler_output = scheduler.schedule()
     model_runner_output = create_model_runner_output(reqs=[request_remote])
-    assert (
-        scheduler_output.scheduled_cached_reqs.num_computed_tokens[0]
-        == NUM_PROMPT_BLOCKS * BLOCK_SIZE
-    )
+    assert (scheduler_output.scheduled_cached_reqs.num_computed_tokens[0] ==
+            NUM_PROMPT_BLOCKS * BLOCK_SIZE)
     scheduler.update_from_output(scheduler_output, model_runner_output)
     assert len(scheduler.running) == 1
     assert len(scheduler.waiting) == 0
 
     # Step 8: free everything.
     scheduler_output = scheduler.schedule()
-    model_runner_output = create_model_runner_output(
-        reqs=[request_remote], use_eos=True
-    )
+    model_runner_output = create_model_runner_output(reqs=[request_remote],
+                                                     use_eos=True)
     scheduler.update_from_output(scheduler_output, model_runner_output)
     _ = scheduler.schedule()
     assert_scheduler_empty(scheduler)
@@ -505,15 +466,13 @@ def test_cannot_recv():
     NUM_TOKENS_LOCAL = int(BLOCK_SIZE * NUM_PROMPT_BLOCKS)
     NUM_TOKENS_REMOTE = int(BLOCK_SIZE * (NUM_PROMPT_BLOCKS + 0.5))
 
-    request_normal = create_request(
-        request_id=1, block_size=BLOCK_SIZE, num_tokens=NUM_TOKENS_LOCAL
-    )
-    request_remote = create_request(
-        request_id=2,
-        block_size=BLOCK_SIZE,
-        num_tokens=NUM_TOKENS_REMOTE,
-        do_remote_prefill=True,
-    )
+    request_normal = create_request(request_id=1,
+                                    block_size=BLOCK_SIZE,
+                                    num_tokens=NUM_TOKENS_LOCAL)
+    request_remote = create_request(request_id=2,
+                                    block_size=BLOCK_SIZE,
+                                    num_tokens=NUM_TOKENS_REMOTE,
+                                    do_remote_prefill=True)
 
     # STEP 1: 3 blocks are in use (2 for prompt, 1 for decode).
     scheduler.add_request(request_normal)
@@ -532,13 +491,12 @@ def test_cannot_recv():
     assert len(scheduler.running) == 1
     assert len(scheduler.waiting) == 1
     # Should not have KV transfer in progress.
-    assert request_remote.status != RequestStatus.WAITING_FOR_REMOTE_KVS
+    assert (request_remote.status != RequestStatus.WAITING_FOR_REMOTE_KVS)
 
     # Step 3: finish the request, free it.
     scheduler_output = scheduler.schedule()
-    model_runner_output = create_model_runner_output(
-        reqs=[request_normal], use_eos=True
-    )
+    model_runner_output = create_model_runner_output(reqs=[request_normal],
+                                                     use_eos=True)
     scheduler.update_from_output(scheduler_output, model_runner_output)
     assert len(scheduler.running) == 0
     assert len(scheduler.waiting) == 1
@@ -549,13 +507,12 @@ def test_cannot_recv():
     scheduler.update_from_output(scheduler_output, model_runner_output)
     assert len(scheduler.running) == 0
     assert len(scheduler.waiting) == 1
-    assert request_remote.status == RequestStatus.WAITING_FOR_REMOTE_KVS
+    assert (request_remote.status == RequestStatus.WAITING_FOR_REMOTE_KVS)
 
     # Step 5: finish recving (5 blocks in use)
     scheduler_output = scheduler.schedule()
     model_runner_output = create_model_runner_output(
-        reqs=[], finished_recving={request_remote.request_id}
-    )
+        reqs=[], finished_recving=[request_remote.request_id])
     scheduler.update_from_output(scheduler_output, model_runner_output)
     assert len(scheduler.running) == 0
     assert len(scheduler.waiting) == 1
@@ -569,9 +526,8 @@ def test_cannot_recv():
 
     # Step 7: free everything.
     scheduler_output = scheduler.schedule()
-    model_runner_output = create_model_runner_output(
-        reqs=[request_remote], use_eos=True
-    )
+    model_runner_output = create_model_runner_output(reqs=[request_remote],
+                                                     use_eos=True)
     scheduler.update_from_output(scheduler_output, model_runner_output)
     _ = scheduler.schedule()
     assert_scheduler_empty(scheduler)

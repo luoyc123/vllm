@@ -34,7 +34,6 @@ Compute Resources:
 - Trainy
 - UC Berkeley
 - UC San Diego
-- Volcengine
 
 Slack Sponsor: Anyscale
 

@@ -6,8 +6,9 @@ import json
 import pytest
 
 from vllm.entrypoints.openai.protocol import ChatCompletionRequest
-from vllm.entrypoints.openai.tool_parsers.hermes_tool_parser import Hermes2ProToolParser
-from vllm.tokenizers import TokenizerLike
+from vllm.entrypoints.openai.tool_parsers.hermes_tool_parser import (
+    Hermes2ProToolParser)
+from vllm.transformers_utils.tokenizer import AnyTokenizer
 
 from ....utils import RemoteOpenAIServer
 
@@ -26,64 +27,61 @@ SERVER_ARGS = [
     f"{LORA_MODEL}",
 ]
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_weather",
-            "description": "Get the current weather in a given location",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city and state, e.g. San Francisco, CA",
-                    },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"],
-                    },
+TOOLS = [{
+    "type": "function",
+    "function": {
+        "name": "get_current_weather",
+        "description": "Get the current weather in a given location",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description":
+                    "The city and state, e.g. San Francisco, CA",
                 },
-                "required": ["location"],
+                "unit": {
+                    "type": "string",
+                    "enum": ["celsius", "fahrenheit"],
+                },
             },
+            "required": ["location"],
         },
-    }
-]
+    },
+}]
 
-PRODUCT_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_product_info",
-            "description": "Get detailed information of a product based on its "
-            "product ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "inserted": {
-                        "type": "boolean",
-                        "description": "inserted.",
-                    },
-                    "product_id": {
-                        "type": "integer",
-                        "description": "The product ID of the product.",
-                    },
+PRODUCT_TOOLS = [{
+    "type": "function",
+    "function": {
+        "name": "get_product_info",
+        "description": "Get detailed information of a product based on its "
+        "product ID.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "inserted": {
+                    "type": "boolean",
+                    "description": "inserted.",
                 },
-                "required": ["product_id", "inserted"],
+                "product_id": {
+                    "type": "integer",
+                    "description": "The product ID of the product.",
+                },
             },
+            "required": ["product_id", "inserted"],
         },
-    }
-]
+    },
+}]
 
 MESSAGES = [{"role": "user", "content": "What's the weather like in Boston?"}]
 
-PRODUCT_MESSAGES = [
-    {
-        "role": "user",
-        "content": "Hi! Do you have any detailed information about the product id "
-        "7355608 and inserted true?",
-    }
-]
+PRODUCT_MESSAGES = [{
+    "role":
+    "user",
+    "content":
+    "Hi! Do you have any detailed information about the product id "
+    "7355608 and inserted true?",
+}]
 
 
 @pytest.mark.asyncio
@@ -152,8 +150,7 @@ async def test_streaming_tool_call():
                     tool_call_chunks[index]["name"] += tool_chunk.function.name
                 if tool_chunk.function.arguments:
                     tool_call_chunks[index]["arguments"] += (
-                        tool_chunk.function.arguments
-                    )
+                        tool_chunk.function.arguments)
 
         assert len(tool_call_chunks) == 1
         reconstructed_tool_call = tool_call_chunks[0]
@@ -243,8 +240,7 @@ async def test_streaming_product_tool_call():
                     tool_call_chunks[index]["name"] += tool_chunk.function.name
                 if tool_chunk.function.arguments:
                     tool_call_chunks[index]["arguments"] += (
-                        tool_chunk.function.arguments
-                    )
+                        tool_chunk.function.arguments)
 
         assert len(tool_call_chunks) == 1
         reconstructed_tool_call = tool_call_chunks[0]
@@ -270,14 +266,14 @@ async def test_streaming_product_tool_call():
 
 
 @pytest.fixture
-def qwen_tokenizer() -> TokenizerLike:
+def qwen_tokenizer() -> AnyTokenizer:
     from vllm.transformers_utils.tokenizer import get_tokenizer
 
     return get_tokenizer("Qwen/Qwen3-32B")
 
 
 @pytest.fixture
-def hermes_parser(qwen_tokenizer: TokenizerLike) -> Hermes2ProToolParser:
+def hermes_parser(qwen_tokenizer: AnyTokenizer) -> Hermes2ProToolParser:
     return Hermes2ProToolParser(qwen_tokenizer)
 
 
@@ -291,11 +287,13 @@ def any_chat_request() -> ChatCompletionRequest:
 
 
 def test_hermes_parser_streaming_just_forward_text(
-    qwen_tokenizer: TokenizerLike,
+    qwen_tokenizer: AnyTokenizer,
     hermes_parser: Hermes2ProToolParser,
     any_chat_request: ChatCompletionRequest,
 ) -> None:
-    text = """This is some prior text that has nothing to do with tool calling."""
+    text = (
+        """This is some prior text that has nothing to do with tool calling."""
+    )
     tokens = qwen_tokenizer.encode(text)
     previous_text = ""
     delta_messages = []
@@ -323,7 +321,7 @@ def test_hermes_parser_streaming_just_forward_text(
 
 
 def test_hermes_parser_streaming_failure_case_bug_19056(
-    qwen_tokenizer: TokenizerLike,
+    qwen_tokenizer: AnyTokenizer,
     hermes_parser: Hermes2ProToolParser,
     any_chat_request: ChatCompletionRequest,
 ) -> None:
@@ -350,14 +348,13 @@ def test_hermes_parser_streaming_failure_case_bug_19056(
             delta_messages.append(delta)
 
     assert delta_messages[0].tool_calls[0].function.name == "final_answer"
-    tool_call_args = "".join(
-        delta.tool_calls[0].function.arguments or "" for delta in delta_messages
-    )
+    tool_call_args = "".join(delta.tool_calls[0].function.arguments or ""
+                             for delta in delta_messages)
     assert tool_call_args == '{"trigger": true}'
 
 
 def test_hermes_parser_streaming(
-    qwen_tokenizer: TokenizerLike,
+    qwen_tokenizer: AnyTokenizer,
     hermes_parser: Hermes2ProToolParser,
     any_chat_request: ChatCompletionRequest,
 ) -> None:
@@ -386,13 +383,13 @@ def test_hermes_parser_streaming(
         if delta is not None:
             delta_messages.append(delta)
     print(delta_messages)
-    assert delta_messages[0].tool_calls[0].function.name == "get_current_temperature"
-    tool_call_args = "".join(
-        delta.tool_calls[0].function.arguments or "" for delta in delta_messages
-    )
+    assert (delta_messages[0].tool_calls[0].function.name ==
+            "get_current_temperature")
+    tool_call_args = "".join(delta.tool_calls[0].function.arguments or ""
+                             for delta in delta_messages)
     assert tool_call_args == (
-        '{"location":"San Francisco, California, United States", "unit": "celsius"}'
-    )
+        '{"location":"San Francisco, California, United States", '
+        '"unit": "celsius"}')
 
 
 def test_hermes_parser_non_streaming_no_tool_call(

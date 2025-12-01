@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import random
+from typing import Optional, Union
 
 import msgspec
 import msgspec.msgpack
@@ -77,8 +78,8 @@ class MockSubscriber:
 
     def __init__(
         self,
-        pub_endpoints: str | list[str],
-        replay_endpoints: str | list[str] | None = None,
+        pub_endpoints: Union[str, list[str]],
+        replay_endpoints: Optional[Union[str, list[str]]] = None,
         topic: str = "",
         decode_type=SampleBatch,
     ):
@@ -110,7 +111,8 @@ class MockSubscriber:
         self.last_seq = -1
         self.decoder = msgspec.msgpack.Decoder(type=decode_type)
 
-    def receive_one(self, timeout=1000) -> tuple[int, SampleBatch] | None:
+    def receive_one(self,
+                    timeout=1000) -> Union[tuple[int, SampleBatch], None]:
         """Receive a single message with timeout"""
         if not self.sub.poll(timeout):
             return None
@@ -133,7 +135,8 @@ class MockSubscriber:
 
         self.replay_sockets[socket_idx].send(start_seq.to_bytes(8, "big"))
 
-    def receive_replay(self, socket_idx: int = 0) -> list[tuple[int, SampleBatch]]:
+    def receive_replay(self,
+                       socket_idx: int = 0) -> list[tuple[int, SampleBatch]]:
         """Receive replayed messages from a specific replay socket"""
         if not self.replay_sockets:
             raise ValueError("Replay sockets not initialized")

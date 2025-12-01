@@ -2,6 +2,8 @@
 
 This document shows how to launch multiple vLLM serving containers and use Nginx to act as a load balancer between the servers.
 
+[](){ #nginxloadbalancer-nginx-build }
+
 ## Build Nginx Container
 
 This guide assumes that you have just cloned the vLLM project and you're currently in the vllm root directory.
@@ -24,6 +26,8 @@ Build the container:
 ```bash
 docker build . -f Dockerfile.nginx --tag nginx-lb
 ```
+
+[](){ #nginxloadbalancer-nginx-conf }
 
 ## Create Simple Nginx Config file
 
@@ -49,6 +53,8 @@ Create a file named `nginx_conf/nginx.conf`. Note that you can add as many serve
     }
     ```
 
+[](){ #nginxloadbalancer-nginx-vllm-container }
+
 ## Build vLLM Container
 
 ```bash
@@ -67,11 +73,15 @@ docker build \
     --build-arg https_proxy=$https_proxy
 ```
 
+[](){ #nginxloadbalancer-nginx-docker-network }
+
 ## Create Docker Network
 
 ```bash
 docker network create vllm_nginx
 ```
+
+[](){ #nginxloadbalancer-nginx-launch-container }
 
 ## Launch vLLM Containers
 
@@ -112,6 +122,8 @@ Notes:
 !!! note
     If you are behind proxy, you can pass the proxy settings to the docker run command via `-e http_proxy=$http_proxy -e https_proxy=$https_proxy`.
 
+[](){ #nginxloadbalancer-nginx-launch-nginx }
+
 ## Launch Nginx
 
 ```bash
@@ -122,6 +134,8 @@ docker run \
     -v ./nginx_conf/:/etc/nginx/conf.d/ \
     --name nginx-lb nginx-lb:latest
 ```
+
+[](){ #nginxloadbalancer-nginx-verify-nginx }
 
 ## Verify That vLLM Servers Are Ready
 

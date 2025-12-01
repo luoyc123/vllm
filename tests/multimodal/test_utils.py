@@ -16,10 +16,10 @@ from vllm.multimodal.utils import MediaConnector, argsort_mm_positions
 
 # Test different image extensions (JPG/PNG) and formats (gray/RGB/RGBA)
 TEST_IMAGE_ASSETS = [
-    "2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg",  # "https://vllm-public-assets.s3.us-west-2.amazonaws.com/vision_model_images/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-    "Grayscale_8bits_palette_sample_image.png",  # "https://vllm-public-assets.s3.us-west-2.amazonaws.com/vision_model_images/Grayscale_8bits_palette_sample_image.png",
-    "1280px-Venn_diagram_rgb.svg.png",  # "https://vllm-public-assets.s3.us-west-2.amazonaws.com/vision_model_images/1280px-Venn_diagram_rgb.svg.png",
-    "RGBA_comp.png",  # "https://vllm-public-assets.s3.us-west-2.amazonaws.com/vision_model_images/RGBA_comp.png",
+    "2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg",  # "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
+    "Grayscale_8bits_palette_sample_image.png",  # "https://upload.wikimedia.org/wikipedia/commons/f/fa/Grayscale_8bits_palette_sample_image.png",
+    "1280px-Venn_diagram_rgb.svg.png",  # "https://upload.wikimedia.org/wikipedia/commons/thumb/9/91/Venn_diagram_rgb.svg/1280px-Venn_diagram_rgb.svg.png",
+    "RGBA_comp.png",  # "https://upload.wikimedia.org/wikipedia/commons/0/0b/RGBA_comp.png",
 ]
 
 TEST_VIDEO_URLS = [
@@ -30,6 +30,7 @@ TEST_VIDEO_URLS = [
 
 @pytest.fixture(scope="module")
 def url_images(local_asset_server) -> dict[str, Image.Image]:
+
     return {
         image_url: local_asset_server.get_image_asset(image_url)
         for image_url in TEST_IMAGE_ASSETS
@@ -38,10 +39,10 @@ def url_images(local_asset_server) -> dict[str, Image.Image]:
 
 def get_supported_suffixes() -> tuple[str, ...]:
     # We should at least test the file types mentioned in GPT-4 with Vision
-    OPENAI_SUPPORTED_SUFFIXES = (".png", ".jpeg", ".jpg", ".webp", ".gif")
+    OPENAI_SUPPORTED_SUFFIXES = ('.png', '.jpeg', '.jpg', '.webp', '.gif')
 
     # Additional file types that are supported by us
-    EXTRA_SUPPORTED_SUFFIXES = (".bmp", ".tiff")
+    EXTRA_SUPPORTED_SUFFIXES = ('.bmp', '.tiff')
 
     return OPENAI_SUPPORTED_SUFFIXES + EXTRA_SUPPORTED_SUFFIXES
 
@@ -63,16 +64,14 @@ async def test_fetch_image_http(image_url: str):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raw_image_url", TEST_IMAGE_ASSETS)
 @pytest.mark.parametrize("suffix", get_supported_suffixes())
-async def test_fetch_image_base64(
-    url_images: dict[str, Image.Image], raw_image_url: str, suffix: str
-):
+async def test_fetch_image_base64(url_images: dict[str, Image.Image],
+                                  raw_image_url: str, suffix: str):
     connector = MediaConnector(
         # Domain restriction should not apply to data URLs.
         allowed_media_domains=[
             "www.bogotobogo.com",
             "github.com",
-        ]
-    )
+        ])
     url_image = url_images[raw_image_url]
 
     try:
@@ -81,14 +80,14 @@ async def test_fetch_image_base64(
         try:
             mime_type = mimetypes.types_map[suffix]
         except KeyError:
-            pytest.skip("No MIME type")
+            pytest.skip('No MIME type')
 
     with NamedTemporaryFile(suffix=suffix) as f:
         try:
             url_image.save(f.name)
         except Exception as e:
-            if e.args[0] == "cannot write mode RGBA as JPEG":
-                pytest.skip("Conversion not supported")
+            if e.args[0] == 'cannot write mode RGBA as JPEG':
+                pytest.skip('Conversion not supported')
 
             raise
 
@@ -114,36 +113,30 @@ async def test_fetch_image_local_files(image_url: str):
         local_connector = MediaConnector(allowed_local_media_path=temp_dir)
 
         origin_image = connector.fetch_image(image_url)
-        origin_image.save(
-            os.path.join(temp_dir, os.path.basename(image_url)),
-            quality=100,
-            icc_profile=origin_image.info.get("icc_profile"),
-        )
+        origin_image.save(os.path.join(temp_dir, os.path.basename(image_url)),
+                          quality=100,
+                          icc_profile=origin_image.info.get('icc_profile'))
 
         image_async = await local_connector.fetch_image_async(
-            f"file://{temp_dir}/{os.path.basename(image_url)}"
-        )
+            f"file://{temp_dir}/{os.path.basename(image_url)}")
         image_sync = local_connector.fetch_image(
-            f"file://{temp_dir}/{os.path.basename(image_url)}"
-        )
+            f"file://{temp_dir}/{os.path.basename(image_url)}")
         # Check that the images are equal
         assert not ImageChops.difference(image_sync, image_async).getbbox()
 
         with pytest.raises(ValueError, match="must be a subpath"):
             await local_connector.fetch_image_async(
-                f"file://{temp_dir}/../{os.path.basename(image_url)}"
-            )
+                f"file://{temp_dir}/../{os.path.basename(image_url)}")
         with pytest.raises(RuntimeError, match="Cannot load local files"):
             await connector.fetch_image_async(
-                f"file://{temp_dir}/../{os.path.basename(image_url)}"
-            )
+                f"file://{temp_dir}/../{os.path.basename(image_url)}")
 
         with pytest.raises(ValueError, match="must be a subpath"):
             local_connector.fetch_image(
-                f"file://{temp_dir}/../{os.path.basename(image_url)}"
-            )
+                f"file://{temp_dir}/../{os.path.basename(image_url)}")
         with pytest.raises(RuntimeError, match="Cannot load local files"):
-            connector.fetch_image(f"file://{temp_dir}/../{os.path.basename(image_url)}")
+            connector.fetch_image(
+                f"file://{temp_dir}/../{os.path.basename(image_url)}")
 
 
 @pytest.mark.asyncio
@@ -156,19 +149,18 @@ async def test_fetch_image_local_files_with_space_in_name(image_url: str):
 
         origin_image = connector.fetch_image(image_url)
         filename = "file name with space.jpg"
-        origin_image.save(
-            os.path.join(temp_dir, filename),
-            quality=100,
-            icc_profile=origin_image.info.get("icc_profile"),
-        )
+        origin_image.save(os.path.join(temp_dir, filename),
+                          quality=100,
+                          icc_profile=origin_image.info.get('icc_profile'))
 
         try:
             image_async = await local_connector.fetch_image_async(
-                f"file://{temp_dir}/{filename}"
-            )
-            image_sync = local_connector.fetch_image(f"file://{temp_dir}/{filename}")
+                f"file://{temp_dir}/{filename}")
+            image_sync = local_connector.fetch_image(
+                f"file://{temp_dir}/{filename}")
         except FileNotFoundError as e:
-            pytest.fail("Failed to fetch image with space in name: {}".format(e))
+            pytest.fail(
+                "Failed to fetch image with space in name: {}".format(e))
         # Check that the images are equal
         assert not ImageChops.difference(image_sync, image_async).getbbox()
 
@@ -191,12 +183,9 @@ async def test_fetch_image_error_conversion():
 @pytest.mark.parametrize("num_frames", [-1, 32, 1800])
 async def test_fetch_video_http(video_url: str, num_frames: int):
     connector = MediaConnector(
-        media_io_kwargs={
-            "video": {
-                "num_frames": num_frames,
-            }
-        }
-    )
+        media_io_kwargs={"video": {
+            "num_frames": num_frames,
+        }})
 
     video_sync, metadata_sync = connector.fetch_video(video_url)
     video_async, metadata_async = await connector.fetch_video_async(video_url)
@@ -209,11 +198,8 @@ async def test_fetch_video_http(video_url: str, num_frames: int):
 @pytest.mark.parametrize("max_duration", [1, 60, 1800])
 @pytest.mark.parametrize("requested_fps", [2, 24])
 async def test_fetch_video_http_with_dynamic_loader(
-    video_url: str,
-    max_duration: int,
-    requested_fps: int,
-    monkeypatch: pytest.MonkeyPatch,
-):
+        video_url: str, max_duration: int, requested_fps: int,
+        monkeypatch: pytest.MonkeyPatch):
     with monkeypatch.context() as m:
         m.setenv("VLLM_VIDEO_LOADER_BACKEND", "opencv_dynamic")
         connector = MediaConnector(
@@ -222,17 +208,18 @@ async def test_fetch_video_http_with_dynamic_loader(
                     "max_duration": max_duration,
                     "requested_fps": requested_fps,
                 }
-            }
-        )
+            })
 
         video_sync, metadata_sync = connector.fetch_video(video_url)
-        video_async, metadata_async = await connector.fetch_video_async(video_url)
+        video_async, metadata_async = await connector.fetch_video_async(
+            video_url)
 
         assert np.array_equal(video_sync, video_async)
         assert metadata_sync == metadata_async
         assert metadata_sync["video_backend"] == "opencv_dynamic"
 
 
+# yapf: disable
 @pytest.mark.parametrize(
     "case",
     [
@@ -263,6 +250,7 @@ async def test_fetch_video_http_with_dynamic_loader(
                 ("image", 0),
             ],
         ),
+
         # Two modalities
         ## Internally sorted
         dict(
@@ -274,7 +262,7 @@ async def test_fetch_video_http_with_dynamic_loader(
                 "audio": [
                     PlaceholderRange(offset=0, length=2),
                     PlaceholderRange(offset=2, length=3),
-                ],
+                ]
             },
             expected_modality_idxs=[
                 ("audio", 0),
@@ -293,7 +281,7 @@ async def test_fetch_video_http_with_dynamic_loader(
                 "audio": [
                     PlaceholderRange(offset=5, length=2),
                     PlaceholderRange(offset=11, length=4),
-                ],
+                ]
             },
             expected_modality_idxs=[
                 ("image", 0),
@@ -312,7 +300,7 @@ async def test_fetch_video_http_with_dynamic_loader(
                 "audio": [
                     PlaceholderRange(offset=11, length=4),
                     PlaceholderRange(offset=5, length=2),
-                ],
+                ]
             },
             expected_modality_idxs=[
                 ("image", 1),
@@ -321,6 +309,7 @@ async def test_fetch_video_http_with_dynamic_loader(
                 ("audio", 0),
             ],
         ),
+
         # Three modalities
         ## Internally sorted
         dict(
@@ -336,7 +325,7 @@ async def test_fetch_video_http_with_dynamic_loader(
                     PlaceholderRange(offset=3, length=4),
                     PlaceholderRange(offset=7, length=5),
                     PlaceholderRange(offset=12, length=6),
-                ],
+                ]
             },
             expected_modality_idxs=[
                 ("audio", 0),
@@ -360,7 +349,7 @@ async def test_fetch_video_http_with_dynamic_loader(
                 ],
                 "video": [
                     PlaceholderRange(offset=8, length=5),
-                ],
+                ]
             },
             expected_modality_idxs=[
                 ("image", 0),
@@ -383,7 +372,7 @@ async def test_fetch_video_http_with_dynamic_loader(
                 ],
                 "video": [
                     PlaceholderRange(offset=8, length=5),
-                ],
+                ]
             },
             expected_modality_idxs=[
                 ("image", 0),
@@ -395,6 +384,7 @@ async def test_fetch_video_http_with_dynamic_loader(
         ),
     ],
 )
+# yapf: enable
 def test_argsort_mm_positions(case):
     mm_positions = case["mm_positions"]
     expected_modality_idxs = case["expected_modality_idxs"]
@@ -409,16 +399,13 @@ def test_argsort_mm_positions(case):
 @pytest.mark.parametrize("num_frames", [-1, 32, 1800])
 async def test_allowed_media_domains(video_url: str, num_frames: int):
     connector = MediaConnector(
-        media_io_kwargs={
-            "video": {
-                "num_frames": num_frames,
-            }
-        },
+        media_io_kwargs={"video": {
+            "num_frames": num_frames,
+        }},
         allowed_media_domains=[
             "www.bogotobogo.com",
             "github.com",
-        ],
-    )
+        ])
 
     video_sync, metadata_sync = connector.fetch_video(video_url)
     video_async, metadata_async = await connector.fetch_video_async(video_url)

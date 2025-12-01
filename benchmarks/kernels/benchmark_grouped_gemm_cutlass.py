@@ -13,11 +13,11 @@ from vllm.model_executor.layers.fused_moe.fused_moe import (
     fused_experts,
     fused_topk,
 )
-from vllm.utils.argparse_utils import FlexibleArgumentParser
+from vllm.utils import FlexibleArgumentParser
 
 DEFAULT_MODELS = [
-    "mistralai/Mixtral-8x7B-Instruct-v0.1",
-    "deepseek-ai/DeepSeek-V2-Lite",
+    "nm-testing/Mixtral-8x7B-Instruct-v0.1",
+    "nm-testing/deepseekv2-lite",
     "ibm-granite/granite-3.0-1b-a400m",
     "ibm-granite/granite-3.0-3b-a800m",
 ]

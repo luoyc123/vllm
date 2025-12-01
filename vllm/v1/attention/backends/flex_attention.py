@@ -2,47 +2,36 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Attention layer with FlexAttention."""
 
-import math
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import TYPE_CHECKING, Optional, Union
 
 import torch
 import torch._dynamo.decorators
 import torch.nn.functional as F
-from torch.nn.attention.flex_attention import (
-    BlockMask,
-    _mask_mod_signature,
-    _score_mod_signature,
-    and_masks,
-    create_block_mask,
-    flex_attention,
-)
+from torch.nn.attention.flex_attention import (BlockMask, _mask_mod_signature,
+                                               _score_mod_signature, and_masks,
+                                               create_block_mask,
+                                               flex_attention)
 
-from vllm.attention.backends.abstract import (
-    AttentionBackend,
-    AttentionImpl,
-    AttentionType,
-    is_quantized_kv_cache,
-)
+from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
+                                              AttentionMetadata, AttentionType,
+                                              is_quantized_kv_cache)
 from vllm.config import VllmConfig
-from vllm.config.cache import CacheDType
 from vllm.logger import init_logger
-from vllm.model_executor.layers.batch_invariant import (
-    vllm_is_batch_invariant,
-)
-from vllm.utils.math_utils import cdiv
-from vllm.utils.torch_utils import is_torch_equal_or_newer
-from vllm.v1.attention.backends.utils import (
-    AttentionMetadataBuilder,
-    CommonAttentionMetadata,
-)
+from vllm.utils import cdiv, is_torch_equal_or_newer
+from vllm.v1.attention.backends.utils import (AttentionMetadataBuilder,
+                                              CommonAttentionMetadata)
 from vllm.v1.kv_cache_interface import AttentionSpec
 
 logger = init_logger(__name__)
 
-create_block_mask_compiled = torch.compile(
-    create_block_mask, fullgraph=True, mode="reduce-overhead"
-)
+if TYPE_CHECKING:
+    from vllm.v1.core.sched.output import SchedulerOutput
+    from vllm.v1.worker.gpu_input_batch import InputBatch
+
+create_block_mask_compiled = torch.compile(create_block_mask,
+                                           fullgraph=True,
+                                           mode="reduce-overhead")
 flex_attention_compiled = torch.compile(flex_attention, fullgraph=True)
 
 
@@ -50,8 +39,7 @@ def _offsets_to_doc_ids_tensor(offsets: torch.Tensor) -> torch.Tensor:
     device = offsets.device
     counts = offsets[1:] - offsets[:-1]
     return torch.repeat_interleave(
-        torch.arange(len(counts), device=device, dtype=torch.int32), counts
-    )
+        torch.arange(len(counts), device=device, dtype=torch.int32), counts)
 
 
 def pad_to_multiple(x: torch.Tensor, multiple: int, dim: int):
@@ -73,25 +61,26 @@ def pad_to_multiple(x: torch.Tensor, multiple: int, dim: int):
 
 class FlexAttentionBackend(AttentionBackend):
     accept_output_buffer: bool = True
-    supported_dtypes: ClassVar[list[torch.dtype]] = [
-        torch.float16,
-        torch.bfloat16,
-        torch.float32,
-    ]
-    supported_kv_cache_dtypes: ClassVar[list[CacheDType]] = ["auto"]
+
+    @classmethod
+    def get_supported_dtypes(cls) -> list[torch.dtype]:
+        return [torch.float16, torch.bfloat16, torch.float32]
+
+    @classmethod
+    def validate_head_size(cls, head_size: int) -> None:
+        return  # FlexAttention supports any head size
 
     @staticmethod
     def get_name() -> str:
         return "FLEX_ATTENTION"
 
-    @classmethod
-    def supports_attn_type(cls, attn_type: str) -> bool:
-        """FlexAttention supports both decoder and encoder-only attention."""
-        return attn_type in (AttentionType.DECODER, AttentionType.ENCODER_ONLY)
-
     @staticmethod
     def get_impl_cls() -> type["FlexAttentionImpl"]:
         return FlexAttentionImpl
+
+    @staticmethod
+    def get_metadata_cls() -> type["AttentionMetadata"]:
+        return FlexAttentionMetadata
 
     @staticmethod
     def get_kv_cache_shape(
@@ -111,18 +100,11 @@ class FlexAttentionBackend(AttentionBackend):
     def use_cascade_attention(*args, **kwargs) -> bool:
         return False
 
-    @classmethod
-    def get_supported_head_sizes(cls) -> list[int]:
-        return []
 
-
-# @torch.compile(fullgraph=True, mode="reduce-overhead")
-def physical_to_logical_mapping(
-    block_table: torch.Tensor,
-    seq_lens: torch.Tensor,
-    block_size: int,
-    total_blocks: int,
-) -> torch.Tensor:
+#@torch.compile(fullgraph=True, mode="reduce-overhead")
+def physical_to_logical_mapping(block_table: torch.Tensor,
+                                seq_lens: torch.Tensor, block_size: int,
+                                total_blocks: int) -> torch.Tensor:
     """
     Creates an inverse mapping from physical block locations to logical indices.
 
@@ -192,37 +174,35 @@ def physical_to_logical_mapping(
     max_reqs, max_num_blocks = block_table.shape
     device = block_table.device
 
-    physical_to_logical = torch.full(
-        (max_reqs, total_blocks), -1, dtype=torch.long, device=device
-    )
+    physical_to_logical = torch.full((max_reqs, total_blocks),
+                                     -1,
+                                     dtype=torch.long,
+                                     device=device)
 
     # Only process valid blocks to avoid garbage values
     num_blocks_per_seq = cdiv(seq_lens, block_size)
-    mask = (
-        torch.arange(max_num_blocks, device=device)[None, :]
-        < num_blocks_per_seq[:, None]
-    )
+    mask = torch.arange(max_num_blocks,
+                        device=device)[None, :] < num_blocks_per_seq[:, None]
 
     valid_block_table = torch.where(mask, block_table, 0)
     valid_logical_indices = torch.where(
-        mask, torch.arange(max_num_blocks, device=device)[None, :], 0
-    )
+        mask,
+        torch.arange(max_num_blocks, device=device)[None, :], 0)
 
-    physical_to_logical.scatter_(
-        -1, valid_block_table.to(torch.int64), valid_logical_indices
-    )
+    physical_to_logical.scatter_(-1, valid_block_table.to(torch.int64),
+                                 valid_logical_indices)
     # NB - Seems like block 0 is always empty so we reset it manually
     physical_to_logical[:, 0] = -1
     return physical_to_logical
 
 
 def unique_static_unsorted(
-    x: torch.Tensor,
-    *,
-    M: int,  # maximum positive value (0 is “skip me”)
-    dim: int = -1,  # axis along which to deduplicate
-    ignored_val: int = 0,  # value to ignore
-    pad_val: int = -1,  # sentinel for unused slots
+        x: torch.Tensor,
+        *,
+        M: int,  # maximum positive value (0 is “skip me”)
+        dim: int = -1,  # axis along which to deduplicate
+        ignored_val: int = 0,  # value to ignore
+        pad_val: int = -1,  # sentinel for unused slots
 ) -> torch.Tensor:
     """
     - Keeps the first occurrence of each non-zero value while preserving order,
@@ -254,7 +234,8 @@ def unique_static_unsorted(
     first_idx.scatter_reduce_(1, x_flat, idx, reduce="amin")
 
     # ── keep mask: first occurrence *and* value ≠ 0 ─────────────────────
-    keep = (x_flat != ignored_val) & (idx == first_idx.gather(1, x_flat))  # [B, N]
+    keep = (x_flat != ignored_val) & (idx == first_idx.gather(1, x_flat)
+                                      )  # [B, N]
 
     # ── left-pack uniques into a fresh tensor ───────────────────────────
     dest_pos = torch.cumsum(keep.to(torch.long), dim=1) - 1  # where to go
@@ -268,9 +249,8 @@ def unique_static_unsorted(
     return packed
 
 
-def causal_mask_mod(
-    b: torch.Tensor, h: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
-):
+def causal_mask_mod(b: torch.Tensor, h: torch.Tensor, q_idx: torch.Tensor,
+                    kv_idx: torch.Tensor):
     return q_idx >= kv_idx
 
 
@@ -287,9 +267,9 @@ class FlexAttentionMetadata:
 
     use_cascade: bool
     common_prefix_len: int
-    cu_prefix_query_lens: torch.Tensor | None
-    prefix_kv_lens: torch.Tensor | None
-    suffix_kv_lens: torch.Tensor | None
+    cu_prefix_query_lens: Optional[torch.Tensor]
+    prefix_kv_lens: Optional[torch.Tensor]
+    suffix_kv_lens: Optional[torch.Tensor]
 
     # Block info
     total_cache_tokens: int
@@ -305,15 +285,15 @@ class FlexAttentionMetadata:
 
     # Flex Metadata
     num_blocks = 0
-    block_mask: BlockMask | None = None
-    score_mod: _score_mod_signature | None = None
+    block_mask: Optional[BlockMask] = None
+    score_mod: Optional[_score_mod_signature] = None
     logical_mask_mod: _mask_mod_signature = causal_mask_mod
-    doc_ids: torch.Tensor | None = None
+    doc_ids: Optional[torch.Tensor] = None
     direct_build: bool = True
     q_block_size: int = 16
     kv_block_size: int = 16
-    transformed_score_mod: _score_mod_signature | None = None
-    sliding_window: int | None = None
+    transformed_score_mod: Optional[_score_mod_signature] = None
+    sliding_window: Optional[int] = None
 
     def _convert_physical_to_logical(
         self,
@@ -335,7 +315,8 @@ class FlexAttentionMetadata:
         physical_kv_block = physical_kv_idx // self.block_size
         physical_kv_offset = physical_kv_idx % self.block_size
         logical_block_idx = self.physical_to_logical[q_req, physical_kv_block]
-        logical_kv_idx = logical_block_idx * self.block_size + physical_kv_offset
+        logical_kv_idx = (logical_block_idx * self.block_size +
+                          physical_kv_offset)
 
         # Determine valid kv indices
         live_block = logical_block_idx >= 0
@@ -369,9 +350,9 @@ class FlexAttentionMetadata:
             q_idx: torch.Tensor,
             physical_kv_idx: torch.Tensor,
         ) -> torch.Tensor:
-            (is_valid, logical_q_idx, logical_kv_idx) = (
-                self._convert_physical_to_logical(self.doc_ids, q_idx, physical_kv_idx)
-            )
+            (is_valid, logical_q_idx,
+             logical_kv_idx) = self._convert_physical_to_logical(
+                 self.doc_ids, q_idx, physical_kv_idx)
             # Apply mask modification only for valid indices
             return torch.where(
                 is_valid,
@@ -409,11 +390,11 @@ class FlexAttentionMetadata:
         """
 
         if self.sliding_window is None:
-            raise ValueError("sliding_window must be set for sliding window attention")
+            raise ValueError(
+                "sliding_window must be set for sliding window attention")
 
-        def sliding_window_mask_mod(
-            b: torch.Tensor, h: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
-        ):
+        def sliding_window_mask_mod(b: torch.Tensor, h: torch.Tensor,
+                                    q_idx: torch.Tensor, kv_idx: torch.Tensor):
             return torch.abs(q_idx - kv_idx) < self.sliding_window
 
         def final_mask_mod(
@@ -422,9 +403,9 @@ class FlexAttentionMetadata:
             q_idx: torch.Tensor,
             physical_kv_idx: torch.Tensor,
         ) -> torch.Tensor:
-            (is_valid, logical_q_idx, logical_kv_idx) = (
-                self._convert_physical_to_logical(self.doc_ids, q_idx, physical_kv_idx)
-            )
+            (is_valid, logical_q_idx,
+             logical_kv_idx) = self._convert_physical_to_logical(
+                 self.doc_ids, q_idx, physical_kv_idx)
             return torch.where(
                 is_valid,
                 sliding_window_mask_mod(b, h, logical_q_idx, logical_kv_idx),
@@ -448,7 +429,7 @@ class FlexAttentionMetadata:
             mask_mod = and_masks(mask_mod, sliding_window_mask_mod)
         return mask_mod
 
-    def get_transformed_score_mod(self) -> _score_mod_signature | None:
+    def get_transformed_score_mod(self) -> Optional[_score_mod_signature]:
         """Creates the transformed score_mod function for FlexAttention.
 
         This function wraps the user's score_mod to handle physical-to-logical
@@ -468,19 +449,18 @@ class FlexAttentionMetadata:
             q_idx: torch.Tensor,
             physical_kv_idx: torch.Tensor,
         ) -> torch.Tensor:
-            (is_valid, logical_q_idx, logical_kv_idx) = (
-                self._convert_physical_to_logical(
-                    request_lookup, q_idx, physical_kv_idx
-                )
-            )
+            (is_valid, logical_q_idx,
+             logical_kv_idx) = self._convert_physical_to_logical(
+                 request_lookup, q_idx, physical_kv_idx)
 
             return torch.where(
                 is_valid,
-                user_score_mod(
-                    score, b, h, logical_q_idx, logical_kv_idx, physical_q=q_idx
-                ),
-                -float("inf"),
-            )
+                user_score_mod(score,
+                               b,
+                               h,
+                               logical_q_idx,
+                               logical_kv_idx,
+                               physical_q=q_idx), -float('inf'))
 
         return transformed_score_mod
 
@@ -511,22 +491,18 @@ class FlexAttentionMetadata:
                 f"FlexAttention currently requires the cache block size "
                 f"({self.block_size}) to be equal to the kv_block_size "
                 f"({self.kv_block_size}). Please check your model's "
-                f"configuration."
-            )
+                f"configuration.")
 
         used_pages = self.block_table[
-            self.doc_ids, : cdiv(self.max_seq_len, self.block_size)
-        ]
-        used_pages_padded = pad_to_multiple(
-            used_pages, multiple=self.q_block_size, dim=0
-        )
+            self.doc_ids, :cdiv(self.max_seq_len, self.block_size)]
+        used_pages_padded = pad_to_multiple(used_pages,
+                                            multiple=self.q_block_size,
+                                            dim=0)
         used_pages_padded = used_pages_padded.reshape(
-            used_pages_padded.shape[0] // self.q_block_size, -1
-        )
+            used_pages_padded.shape[0] // self.q_block_size, -1)
         used_pages_padded = used_pages_padded // page_to_block_ratio
-        kv_indices = unique_static_unsorted(
-            (used_pages_padded.long()), M=self.num_blocks
-        ).to(torch.int32)
+        kv_indices = unique_static_unsorted((used_pages_padded.long()),
+                                            M=self.num_blocks).to(torch.int32)
 
         kv_num_blocks = (kv_indices >= 0).sum(dim=-1).to(torch.int32)
         block_mask_kwargs = {
@@ -546,7 +522,8 @@ class FlexAttentionMetadata:
 
     def build_block_mask(self) -> BlockMask:
         mask_mod = self.get_mask_mod()
-        kv_len = self.total_cache_tokens if self.causal else self.num_actual_tokens
+        kv_len = (self.total_cache_tokens
+                  if self.causal else self.num_actual_tokens)
         return create_block_mask_compiled(
             mask_mod,
             None,
@@ -576,14 +553,11 @@ class FlexAttentionMetadata:
             self.block_mask = self.build_block_mask()
 
 
-class FlexAttentionMetadataBuilder(AttentionMetadataBuilder[FlexAttentionMetadata]):
-    def __init__(
-        self,
-        kv_cache_spec: AttentionSpec,
-        layer_names: list[str],
-        vllm_config: VllmConfig,
-        device: torch.device,
-    ):
+class FlexAttentionMetadataBuilder(
+        AttentionMetadataBuilder[FlexAttentionMetadata]):
+
+    def __init__(self, kv_cache_spec: AttentionSpec, layer_names: list[str],
+                 vllm_config: VllmConfig, device: torch.device):
         super().__init__(kv_cache_spec, layer_names, vllm_config, device)
 
         self.model_config = vllm_config.model_config
@@ -591,23 +565,26 @@ class FlexAttentionMetadataBuilder(AttentionMetadataBuilder[FlexAttentionMetadat
         self.cache_config = vllm_config.cache_config
 
         self.num_heads_q = self.model_config.get_num_attention_heads(
-            self.parallel_config
-        )
-        self.num_heads_kv = self.model_config.get_num_kv_heads(self.parallel_config)
+            self.parallel_config)
+        self.num_heads_kv = self.model_config.get_num_kv_heads(
+            self.parallel_config)
         self.headdim = self.model_config.get_head_size()
         self.block_size = kv_cache_spec.block_size
         self.kv_cache_spec = kv_cache_spec
-        supports_small_blocks = is_torch_equal_or_newer("2.9.0.dev0")
-        self.direct_build: bool = supports_small_blocks
-        self.q_block_size: int = 16 if supports_small_blocks else 128
-        self.kv_block_size: int = self.block_size if supports_small_blocks else 128
+        self.direct_build: bool = is_torch_equal_or_newer("2.9.0.dev0")
+        self.q_block_size: int = 16 if is_torch_equal_or_newer(
+            "2.9.0.dev0") else 128
+        self.kv_block_size: int = 16 if is_torch_equal_or_newer(
+            "2.9.0.dev0") else 128
 
-    def build(
-        self,
-        common_prefix_len: int,
-        common_attn_metadata: CommonAttentionMetadata,
-        fast_build: bool = False,
-    ) -> FlexAttentionMetadata:
+    def reorder_batch(self, input_batch: "InputBatch",
+                      scheduler_output: "SchedulerOutput") -> bool:
+        return False
+
+    def build(self,
+              common_prefix_len: int,
+              common_attn_metadata: CommonAttentionMetadata,
+              fast_build: bool = False) -> FlexAttentionMetadata:
         num_reqs = common_attn_metadata.num_reqs
         num_actual_tokens = common_attn_metadata.num_actual_tokens
         max_query_len = common_attn_metadata.max_query_len
@@ -630,18 +607,15 @@ class FlexAttentionMetadataBuilder(AttentionMetadataBuilder[FlexAttentionMetadat
         max_possible_seq_len = self.model_config.max_model_len
         num_gpu_blocks = self.cache_config.num_gpu_blocks
 
-        assert num_gpu_blocks is not None, (
+        assert num_gpu_blocks is not None, \
             "FlexAttention requires num_gpu_blocks to be set"
-        )
-        total_cache_tokens = num_gpu_blocks * block_size
+        total_cache_tokens = (num_gpu_blocks * block_size)
 
         inverse_block_table = physical_to_logical_mapping(
-            block_table_tensor, seq_lens, block_size, num_gpu_blocks
-        )
+            block_table_tensor, seq_lens, block_size, num_gpu_blocks)
 
         offset_tensor = common_attn_metadata.num_computed_tokens_cpu.to(
-            self.device, non_blocking=True
-        )
+            self.device, non_blocking=True)
 
         out = FlexAttentionMetadata(
             causal=common_attn_metadata.causal,
@@ -664,10 +638,7 @@ class FlexAttentionMetadataBuilder(AttentionMetadataBuilder[FlexAttentionMetadat
             total_cache_tokens=total_cache_tokens,
             decode_offset=offset_tensor,
             num_blocks_per_seq=num_blocks_per_seq,
-            # FIXME(Isotr0py): direct build has issue to build bidirectional
-            # attention block mask for encoder-only models, disable it temporarily.
-            # see: https://github.com/vllm-project/vllm/pull/27329#issuecomment-3431484053
-            direct_build=(self.direct_build and common_attn_metadata.causal),
+            direct_build=self.direct_build,
             q_block_size=self.q_block_size,
             kv_block_size=self.kv_block_size,
         )
@@ -678,9 +649,9 @@ class FlexAttentionMetadataBuilder(AttentionMetadataBuilder[FlexAttentionMetadat
 
 
 class FlexAttentionImpl(AttentionImpl):
-    sliding_window: int | None
-    alibi_slopes: torch.Tensor | None
-    logits_soft_cap: float | None
+    sliding_window: Optional[int]
+    alibi_slopes: Optional[torch.Tensor]
+    logits_soft_cap: Optional[float]
 
     def __init__(
         self,
@@ -688,12 +659,12 @@ class FlexAttentionImpl(AttentionImpl):
         head_size: int,
         scale: float,
         num_kv_heads: int,
-        alibi_slopes: list[float] | None,
-        sliding_window: int | None,
+        alibi_slopes: Optional[list[float]],
+        sliding_window: Optional[int],
         kv_cache_dtype: str,
-        logits_soft_cap: float | None = None,
+        logits_soft_cap: Optional[float] = None,
         attn_type: AttentionType = AttentionType.DECODER,
-        kv_sharing_target_layer_name: str | None = None,
+        kv_sharing_target_layer_name: Optional[str] = None,
         **kwargs,
     ) -> None:
         self.num_heads = num_heads
@@ -702,15 +673,14 @@ class FlexAttentionImpl(AttentionImpl):
         self.num_kv_heads = num_kv_heads
         self.attn_type = attn_type
 
-        if attn_type not in (AttentionType.ENCODER_ONLY, AttentionType.DECODER):
+        if attn_type not in (AttentionType.ENCODER_ONLY,
+                             AttentionType.DECODER):
             raise NotImplementedError(
-                f"FlexAttention does not support {attn_type} attention"
-            )
+                f"FlexAttention does not support {attn_type} attention")
 
         if alibi_slopes is not None:
             raise NotImplementedError(
-                "FlexAttention does not support alibi slopes yet."
-            )
+                "FlexAttention does not support alibi slopes yet.")
         else:
             self.alibi_slopes = None
 
@@ -720,19 +690,19 @@ class FlexAttentionImpl(AttentionImpl):
         self.logits_soft_cap = logits_soft_cap
         if self.logits_soft_cap is not None:
             raise NotImplementedError(
-                "FlexAttention does not support logits soft cap yet."
-            )
+                "FlexAttention does not support logits soft cap yet.")
 
         assert self.num_heads % self.num_kv_heads == 0
         self.num_queries_per_kv = self.num_heads // self.num_kv_heads
 
         if kv_sharing_target_layer_name is not None:
-            raise NotImplementedError("FlexAttention does not support kv sharing yet.")
+            raise NotImplementedError(
+                "FlexAttention does not support kv sharing yet.")
 
+        FlexAttentionBackend.validate_head_size(head_size)
         if is_quantized_kv_cache(self.kv_cache_dtype):
             raise NotImplementedError(
-                "FlexAttention does not support quantized kv-cache. Yet"
-            )
+                "FlexAttention does not support quantized kv-cache. Yet")
 
     @staticmethod
     def view_as_4d(tensor: torch.Tensor) -> torch.Tensor:
@@ -750,9 +720,9 @@ class FlexAttentionImpl(AttentionImpl):
         value: torch.Tensor,
         kv_cache: torch.Tensor,
         attn_metadata: FlexAttentionMetadata,
-        output: torch.Tensor | None = None,
-        output_scale: torch.Tensor | None = None,
-        output_block_scale: torch.Tensor | None = None,
+        output: Optional[torch.Tensor] = None,
+        output_scale: Optional[torch.Tensor] = None,
+        output_block_scale: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Forward pass with FLexAttention.
 
@@ -769,14 +739,14 @@ class FlexAttentionImpl(AttentionImpl):
         assert output is not None, "Output tensor must be provided."
         if output_scale is not None or output_block_scale is not None:
             raise NotImplementedError(
-                "fused output quantization is not yet supported for FlexAttentionImpl"
-            )
+                "fused output quantization is not yet supported"
+                " for FlexAttentionImpl")
 
         enable_gqa = self.num_kv_heads != self.num_heads
 
         if attn_metadata is None:
             # Profiling run.
-            return output.fill_(0)
+            return output
             # query = self.view_as_4d(query).permute(0, 2, 1, 3)
             # return torch.empty_like(query)
 
@@ -789,11 +759,11 @@ class FlexAttentionImpl(AttentionImpl):
                 # in direct block mask building code path.
                 logger.warning_once(
                     "Using direct block mask building with sliding window, "
-                    "which is suboptimal now. Performance may be degraded."
-                )
+                    "which is suboptimal now. Performance may be degraded.")
                 # update mask mod in attention metadata
                 attn_metadata.mask_mod = attn_metadata.get_mask_mod()
-                attn_metadata.block_mask = attn_metadata._build_block_mask_direct()
+                attn_metadata.block_mask = (
+                    attn_metadata._build_block_mask_direct())
             else:
                 attn_metadata.block_mask = attn_metadata.build_block_mask()
 
@@ -806,9 +776,8 @@ class FlexAttentionImpl(AttentionImpl):
             )
 
             query = query[:, :, :num_actual_tokens, :]
-            if (key_tensor.size(-2) > num_actual_tokens) or (
-                value_tensor.size(-2) > num_actual_tokens
-            ):
+            if ((key_tensor.size(-2) > num_actual_tokens)
+                    or (value_tensor.size(-2) > num_actual_tokens)):
                 # In the encoder-only model with torch.compile,
                 # qkv might be padded, which might cause exception.
                 # see: https://github.com/vllm-project/vllm/pull/24872#discussion_r2353252290
@@ -832,7 +801,8 @@ class FlexAttentionImpl(AttentionImpl):
 
             # View out the block_size dim
             key_cache = key_cache.view(-1, self.num_kv_heads, self.head_size)
-            value_cache = value_cache.view(-1, self.num_kv_heads, self.head_size)
+            value_cache = value_cache.view(-1, self.num_kv_heads,
+                                           self.head_size)
             query, key_tensor, value_tensor = map(
                 lambda x: self.view_as_4d(x).permute(0, 2, 1, 3),
                 (query, key_cache, value_cache),
@@ -846,9 +816,8 @@ class FlexAttentionImpl(AttentionImpl):
         assert attn_metadata.block_mask is not None
         block_m, block_n = attn_metadata.block_mask.BLOCK_SIZE
 
-        kernel_options = get_kernel_options(
-            query, block_m, block_n, attn_metadata.direct_build
-        )
+        kernel_options = get_kernel_options(query, block_m, block_n,
+                                            attn_metadata.direct_build)
         out = flex_attention_compiled(
             query,
             key_tensor,
@@ -866,59 +835,27 @@ class FlexAttentionImpl(AttentionImpl):
         return output
 
 
-def get_kernel_options(
-    query, block_m, block_n, use_direct_build: bool
-) -> dict[str, int | bool]:
-    kernel_options: dict[str, int | bool] = {
+def get_kernel_options(query, block_m, block_n,
+                       use_direct_build: bool) -> dict[str, Union[int, bool]]:
+    kernel_options: dict[str, Union[int, bool]] = {
         "FORCE_USE_FLEX_ATTENTION": True,
     }
-
-    def ensure_divisible(candidate: int, block_size: int) -> int:
-        """Pick a kernel block size that divides the logical block."""
-        if block_size <= 0:
-            return candidate
-        candidate = min(candidate, block_size)
-        if candidate <= 0:
-            return block_size
-        if block_size % candidate == 0:
-            return candidate
-
-        candidate = math.gcd(candidate, block_size)
-        if candidate <= 1:
-            return block_size
-        return candidate
-
-    if vllm_is_batch_invariant():
-        kernel_options["BLOCK_M"] = 16
-        kernel_options["BLOCK_N"] = 16
-        kernel_options["IS_DIVISIBLE"] = False
-        return kernel_options
     if use_direct_build:
         kernel_options["BLOCK_M"] = block_m
         kernel_options["BLOCK_N"] = block_n
         return kernel_options
     else:
-        preferred_block = 32 if query.dtype == torch.float32 else 64
-        block_lower_bound = 16
-
-        block_m_candidate = ensure_divisible(preferred_block, block_m)
-        block_n_candidate = ensure_divisible(preferred_block, block_n)
-
+        kernel_options["BLOCK_M"] = 64
+        kernel_options["BLOCK_N"] = 64
+        if query.dtype == torch.float32:
+            kernel_options["BLOCK_M"] = 32
+            kernel_options["BLOCK_N"] = 32
+        # if current_platform.is_cuda():
         if torch.cuda.is_available():
             device_props = torch.cuda.get_device_properties()
             max_shared_memory = device_props.shared_memory_per_block_optin
             if max_shared_memory < 144 * 1024:
-                block_m_candidate = ensure_divisible(
-                    max(1, block_m_candidate // 2), block_m
-                )
-                block_n_candidate = ensure_divisible(
-                    max(1, block_n_candidate // 2), block_n
-                )
-
-        block_m_candidate = max(block_m_candidate, block_lower_bound)
-        block_n_candidate = max(block_n_candidate, block_lower_bound)
-
-        kernel_options["BLOCK_M"] = block_m_candidate
-        kernel_options["BLOCK_N"] = block_n_candidate
+                kernel_options["BLOCK_M"] = kernel_options["BLOCK_M"] // 2
+                kernel_options["BLOCK_N"] = kernel_options["BLOCK_N"] // 2
 
     return kernel_options

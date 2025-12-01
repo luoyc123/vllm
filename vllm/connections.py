@@ -3,6 +3,7 @@
 
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 import aiohttp
@@ -19,8 +20,8 @@ class HTTPConnection:
 
         self.reuse_client = reuse_client
 
-        self._sync_client: requests.Session | None = None
-        self._async_client: aiohttp.ClientSession | None = None
+        self._sync_client: Optional[requests.Session] = None
+        self._async_client: Optional[aiohttp.ClientSession] = None
 
     def get_sync_client(self) -> requests.Session:
         if self._sync_client is None or not self.reuse_client:
@@ -40,9 +41,8 @@ class HTTPConnection:
         parsed_url = urlparse(url)
 
         if parsed_url.scheme not in ("http", "https"):
-            raise ValueError(
-                "Invalid HTTP URL: A valid HTTP URL must have scheme 'http' or 'https'."
-            )
+            raise ValueError("Invalid HTTP URL: A valid HTTP URL "
+                             "must have scheme 'http' or 'https'.")
 
     def _headers(self, **extras: str) -> MutableMapping[str, str]:
         return {"User-Agent": f"vLLM/{VLLM_VERSION}", **extras}
@@ -52,8 +52,8 @@ class HTTPConnection:
         url: str,
         *,
         stream: bool = False,
-        timeout: float | None = None,
-        extra_headers: Mapping[str, str] | None = None,
+        timeout: Optional[float] = None,
+        extra_headers: Optional[Mapping[str, str]] = None,
         allow_redirects: bool = True,
     ):
         self._validate_http_url(url)
@@ -61,20 +61,18 @@ class HTTPConnection:
         client = self.get_sync_client()
         extra_headers = extra_headers or {}
 
-        return client.get(
-            url,
-            headers=self._headers(**extra_headers),
-            stream=stream,
-            timeout=timeout,
-            allow_redirects=allow_redirects,
-        )
+        return client.get(url,
+                          headers=self._headers(**extra_headers),
+                          stream=stream,
+                          timeout=timeout,
+                          allow_redirects=allow_redirects)
 
     async def get_async_response(
         self,
         url: str,
         *,
-        timeout: float | None = None,
-        extra_headers: Mapping[str, str] | None = None,
+        timeout: Optional[float] = None,
+        extra_headers: Optional[Mapping[str, str]] = None,
         allow_redirects: bool = True,
     ):
         self._validate_http_url(url)
@@ -82,19 +80,19 @@ class HTTPConnection:
         client = await self.get_async_client()
         extra_headers = extra_headers or {}
 
-        return client.get(
-            url,
-            headers=self._headers(**extra_headers),
-            timeout=timeout,
-            allow_redirects=allow_redirects,
-        )
+        return client.get(url,
+                          headers=self._headers(**extra_headers),
+                          timeout=timeout,
+                          allow_redirects=allow_redirects)
 
-    def get_bytes(
-        self, url: str, *, timeout: float | None = None, allow_redirects: bool = True
-    ) -> bytes:
-        with self.get_response(
-            url, timeout=timeout, allow_redirects=allow_redirects
-        ) as r:
+    def get_bytes(self,
+                  url: str,
+                  *,
+                  timeout: Optional[float] = None,
+                  allow_redirects: bool = True) -> bytes:
+        with self.get_response(url,
+                               timeout=timeout,
+                               allow_redirects=allow_redirects) as r:
             r.raise_for_status()
 
             return r.content
@@ -103,17 +101,16 @@ class HTTPConnection:
         self,
         url: str,
         *,
-        timeout: float | None = None,
+        timeout: Optional[float] = None,
         allow_redirects: bool = True,
     ) -> bytes:
         async with await self.get_async_response(
-            url, timeout=timeout, allow_redirects=allow_redirects
-        ) as r:
+                url, timeout=timeout, allow_redirects=allow_redirects) as r:
             r.raise_for_status()
 
             return await r.read()
 
-    def get_text(self, url: str, *, timeout: float | None = None) -> str:
+    def get_text(self, url: str, *, timeout: Optional[float] = None) -> str:
         with self.get_response(url, timeout=timeout) as r:
             r.raise_for_status()
 
@@ -123,14 +120,14 @@ class HTTPConnection:
         self,
         url: str,
         *,
-        timeout: float | None = None,
+        timeout: Optional[float] = None,
     ) -> str:
         async with await self.get_async_response(url, timeout=timeout) as r:
             r.raise_for_status()
 
             return await r.text()
 
-    def get_json(self, url: str, *, timeout: float | None = None) -> str:
+    def get_json(self, url: str, *, timeout: Optional[float] = None) -> str:
         with self.get_response(url, timeout=timeout) as r:
             r.raise_for_status()
 
@@ -140,7 +137,7 @@ class HTTPConnection:
         self,
         url: str,
         *,
-        timeout: float | None = None,
+        timeout: Optional[float] = None,
     ) -> str:
         async with await self.get_async_response(url, timeout=timeout) as r:
             r.raise_for_status()
@@ -152,7 +149,7 @@ class HTTPConnection:
         url: str,
         save_path: Path,
         *,
-        timeout: float | None = None,
+        timeout: Optional[float] = None,
         chunk_size: int = 128,
     ) -> Path:
         with self.get_response(url, timeout=timeout) as r:
@@ -169,7 +166,7 @@ class HTTPConnection:
         url: str,
         save_path: Path,
         *,
-        timeout: float | None = None,
+        timeout: Optional[float] = None,
         chunk_size: int = 128,
     ) -> Path:
         async with await self.get_async_response(url, timeout=timeout) as r:

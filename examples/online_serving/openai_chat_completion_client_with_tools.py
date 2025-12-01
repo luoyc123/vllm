@@ -161,7 +161,6 @@ def main():
         {
             "role": "assistant",
             "tool_calls": chat_completion.choices[0].message.tool_calls,
-            "reasoning": chat_completion.choices[0].message.reasoning,
         }
     )
 

@@ -12,7 +12,6 @@ using CubMaxOp = cub::Max;
   #endif  // CUB_VERSION
 #else
   #include <hipcub/hipcub.hpp>
-namespace cub = hipcub;
-using CubAddOp = hipcub::Sum;
-using CubMaxOp = hipcub::Max;
+using CubAddOp = cub::Sum;
+using CubMaxOp = cub::Max;
 #endif  // USE_ROCM

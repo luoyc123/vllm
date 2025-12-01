@@ -4,6 +4,7 @@
 from contextlib import suppress
 from dataclasses import dataclass, field
 from http import HTTPStatus
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,7 +12,8 @@ import pytest
 from vllm.config.multimodal import MultiModalConfig
 from vllm.entrypoints.openai.protocol import CompletionRequest, ErrorResponse
 from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
-from vllm.entrypoints.openai.serving_models import BaseModelPath, OpenAIServingModels
+from vllm.entrypoints.openai.serving_models import (BaseModelPath,
+                                                    OpenAIServingModels)
 from vllm.lora.request import LoRARequest
 from vllm.lora.resolver import LoRAResolver, LoRAResolverRegistry
 from vllm.transformers_utils.tokenizer import get_tokenizer
@@ -31,20 +33,19 @@ class MockHFConfig:
 @dataclass
 class MockModelConfig:
     """Minimal mock ModelConfig for testing."""
-
     model: str = MODEL_NAME
     tokenizer: str = MODEL_NAME
     trust_remote_code: bool = False
     tokenizer_mode: str = "auto"
     max_model_len: int = 100
-    tokenizer_revision: str | None = None
-    multimodal_config: MultiModalConfig = field(default_factory=MultiModalConfig)
+    tokenizer_revision: Optional[str] = None
+    multimodal_config: MultiModalConfig = field(
+        default_factory=MultiModalConfig)
     hf_config: MockHFConfig = field(default_factory=MockHFConfig)
-    logits_processors: list[str] | None = None
-    logits_processor_pattern: str | None = None
-    diff_sampling_param: dict | None = None
+    logits_processor_pattern: Optional[str] = None
+    diff_sampling_param: Optional[dict] = None
     allowed_local_media_path: str = ""
-    allowed_media_domains: list[str] | None = None
+    allowed_media_domains: Optional[list[str]] = None
     encoder_config = None
     generation_config: str = "auto"
     skip_tokenizer_init: bool = False
@@ -54,21 +55,17 @@ class MockModelConfig:
 
 
 class MockLoRAResolver(LoRAResolver):
-    async def resolve_lora(
-        self, base_model_name: str, lora_name: str
-    ) -> LoRARequest | None:
+
+    async def resolve_lora(self, base_model_name: str,
+                           lora_name: str) -> Optional[LoRARequest]:
         if lora_name == "test-lora":
-            return LoRARequest(
-                lora_name="test-lora",
-                lora_int_id=1,
-                lora_local_path="/fake/path/test-lora",
-            )
+            return LoRARequest(lora_name="test-lora",
+                               lora_int_id=1,
+                               lora_local_path="/fake/path/test-lora")
         elif lora_name == "invalid-lora":
-            return LoRARequest(
-                lora_name="invalid-lora",
-                lora_int_id=2,
-                lora_local_path="/fake/path/invalid-lora",
-            )
+            return LoRARequest(lora_name="invalid-lora",
+                               lora_int_id=2,
+                               lora_local_path="/fake/path/invalid-lora")
         return None
 
 
@@ -99,7 +96,8 @@ def mock_serving_setup():
             return True
         if lora_request.lora_name == "invalid-lora":
             # Simulate failure during addition (e.g. invalid format)
-            raise ValueError(f"Simulated failure adding LoRA: {lora_request.lora_name}")
+            raise ValueError(f"Simulated failure adding LoRA: "
+                             f"{lora_request.lora_name}")
         return True
 
     mock_engine.add_lora = AsyncMock(side_effect=mock_add_lora_side_effect)
@@ -108,33 +106,28 @@ def mock_serving_setup():
         for _ in []:
             yield _
 
-    mock_engine.generate = MagicMock(spec=AsyncLLM.generate, side_effect=mock_generate)
+    mock_engine.generate = MagicMock(spec=AsyncLLM.generate,
+                                     side_effect=mock_generate)
 
     mock_engine.generate.reset_mock()
     mock_engine.add_lora.reset_mock()
 
-    mock_engine.model_config = MockModelConfig()
-    mock_engine.input_processor = MagicMock()
-    mock_engine.io_processor = MagicMock()
+    mock_model_config = MockModelConfig()
+    models = OpenAIServingModels(engine_client=mock_engine,
+                                 base_model_paths=BASE_MODEL_PATHS,
+                                 model_config=mock_model_config)
 
-    models = OpenAIServingModels(
-        engine_client=mock_engine,
-        base_model_paths=BASE_MODEL_PATHS,
-    )
-
-    serving_completion = OpenAIServingCompletion(
-        mock_engine, models, request_logger=None
-    )
-
-    serving_completion._process_inputs = AsyncMock(
-        return_value=(MagicMock(name="engine_request"), {})
-    )
+    serving_completion = OpenAIServingCompletion(mock_engine,
+                                                 mock_model_config,
+                                                 models,
+                                                 request_logger=None)
 
     return mock_engine, serving_completion
 
 
 @pytest.mark.asyncio
-async def test_serving_completion_with_lora_resolver(mock_serving_setup, monkeypatch):
+async def test_serving_completion_with_lora_resolver(mock_serving_setup,
+                                                     monkeypatch):
     monkeypatch.setenv("VLLM_ALLOW_RUNTIME_LORA_UPDATING", "true")
 
     mock_engine, serving_completion = mock_serving_setup
@@ -156,13 +149,14 @@ async def test_serving_completion_with_lora_resolver(mock_serving_setup, monkeyp
     assert called_lora_request.lora_name == lora_model_name
 
     mock_engine.generate.assert_called_once()
-    called_lora_request = mock_engine.generate.call_args[1]["lora_request"]
+    called_lora_request = mock_engine.generate.call_args[1]['lora_request']
     assert isinstance(called_lora_request, LoRARequest)
     assert called_lora_request.lora_name == lora_model_name
 
 
 @pytest.mark.asyncio
-async def test_serving_completion_resolver_not_found(mock_serving_setup, monkeypatch):
+async def test_serving_completion_resolver_not_found(mock_serving_setup,
+                                                     monkeypatch):
     monkeypatch.setenv("VLLM_ALLOW_RUNTIME_LORA_UPDATING", "true")
 
     mock_engine, serving_completion = mock_serving_setup
@@ -185,8 +179,7 @@ async def test_serving_completion_resolver_not_found(mock_serving_setup, monkeyp
 
 @pytest.mark.asyncio
 async def test_serving_completion_resolver_add_lora_fails(
-    mock_serving_setup, monkeypatch
-):
+        mock_serving_setup, monkeypatch):
     monkeypatch.setenv("VLLM_ALLOW_RUNTIME_LORA_UPDATING", "true")
 
     mock_engine, serving_completion = mock_serving_setup

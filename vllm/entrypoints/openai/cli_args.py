@@ -11,36 +11,33 @@ import json
 import ssl
 from collections.abc import Sequence
 from dataclasses import field
-from typing import Literal
+from typing import Literal, Optional, Union
 
 from pydantic.dataclasses import dataclass
 
 import vllm.envs as envs
 from vllm.config import config
 from vllm.engine.arg_utils import AsyncEngineArgs, optional_type
-from vllm.entrypoints.chat_utils import (
-    ChatTemplateContentFormatOption,
-    validate_chat_template,
-)
-from vllm.entrypoints.constants import (
-    H11_MAX_HEADER_COUNT_DEFAULT,
-    H11_MAX_INCOMPLETE_EVENT_SIZE_DEFAULT,
-)
+from vllm.entrypoints.chat_utils import (ChatTemplateContentFormatOption,
+                                         validate_chat_template)
+from vllm.entrypoints.constants import (H11_MAX_HEADER_COUNT_DEFAULT,
+                                        H11_MAX_INCOMPLETE_EVENT_SIZE_DEFAULT)
 from vllm.entrypoints.openai.serving_models import LoRAModulePath
 from vllm.entrypoints.openai.tool_parsers import ToolParserManager
 from vllm.logger import init_logger
-from vllm.utils.argparse_utils import FlexibleArgumentParser
+from vllm.utils import FlexibleArgumentParser
 
 logger = init_logger(__name__)
 
 
 class LoRAParserAction(argparse.Action):
+
     def __call__(
         self,
         parser: argparse.ArgumentParser,
         namespace: argparse.Namespace,
-        values: str | Sequence[str] | None,
-        option_string: str | None = None,
+        values: Optional[Union[str, Sequence[str]]],
+        option_string: Optional[str] = None,
     ):
         if values is None:
             values = []
@@ -60,7 +57,8 @@ class LoRAParserAction(argparse.Action):
                     lora = LoRAModulePath(**lora_dict)
                     lora_list.append(lora)
                 except json.JSONDecodeError:
-                    parser.error(f"Invalid JSON format for --lora-modules: {item}")
+                    parser.error(
+                        f"Invalid JSON format for --lora-modules: {item}")
                 except TypeError as e:
                     parser.error(
                         f"Invalid fields for --lora-modules: {item} - {str(e)}"
@@ -72,16 +70,14 @@ class LoRAParserAction(argparse.Action):
 @dataclass
 class FrontendArgs:
     """Arguments for the OpenAI-compatible frontend server."""
-
-    host: str | None = None
+    host: Optional[str] = None
     """Host name."""
     port: int = 8000
     """Port number."""
-    uds: str | None = None
+    uds: Optional[str] = None
     """Unix domain socket path. If set, host and port arguments are ignored."""
-    uvicorn_log_level: Literal[
-        "debug", "info", "warning", "error", "critical", "trace"
-    ] = "info"
+    uvicorn_log_level: Literal["debug", "info", "warning", "error", "critical",
+                               "trace"] = "info"
     """Log level for uvicorn."""
     disable_uvicorn_access_log: bool = False
     """Disable uvicorn access log."""
@@ -93,15 +89,15 @@ class FrontendArgs:
     """Allowed methods."""
     allowed_headers: list[str] = field(default_factory=lambda: ["*"])
     """Allowed headers."""
-    api_key: list[str] | None = None
+    api_key: Optional[list[str]] = None
     """If provided, the server will require one of these keys to be presented in
     the header."""
-    lora_modules: list[LoRAModulePath] | None = None
+    lora_modules: Optional[list[LoRAModulePath]] = None
     """LoRA modules configurations in either 'name=path' format or JSON format
     or JSON list format. Example (old format): `'name=path'` Example (new
     format): `{\"name\": \"name\", \"path\": \"lora_path\",
     \"base_model_name\": \"id\"}`"""
-    chat_template: str | None = None
+    chat_template: Optional[str] = None
     """The file path to the chat template, or the template in single-line form
     for the specified model."""
     chat_template_content_format: ChatTemplateContentFormatOption = "auto"
@@ -116,17 +112,17 @@ class FrontendArgs:
     or the ones from tokenizer."""
     response_role: str = "assistant"
     """The role name to return if `request.add_generation_prompt=true`."""
-    ssl_keyfile: str | None = None
+    ssl_keyfile: Optional[str] = None
     """The file path to the SSL key file."""
-    ssl_certfile: str | None = None
+    ssl_certfile: Optional[str] = None
     """The file path to the SSL cert file."""
-    ssl_ca_certs: str | None = None
+    ssl_ca_certs: Optional[str] = None
     """The CA certificates file."""
     enable_ssl_refresh: bool = False
     """Refresh SSL Context when SSL certificate files change"""
     ssl_cert_reqs: int = int(ssl.CERT_NONE)
     """Whether client certificate is required (see stdlib ssl module's)."""
-    root_path: str | None = None
+    root_path: Optional[str] = None
     """FastAPI root_path when app is behind a path based routing proxy."""
     middleware: list[str] = field(default_factory=lambda: [])
     """Additional ASGI middleware to apply to the app. We accept multiple
@@ -149,7 +145,7 @@ class FrontendArgs:
     exclude_tools_when_tool_choice_none: bool = False
     """If specified, exclude tool definitions in prompts when
     tool_choice='none'."""
-    tool_call_parser: str | None = None
+    tool_call_parser: Optional[str] = None
     """Select the tool call parser depending on the model that you're using.
     This is used to parse the model-generated tool call into OpenAI API format.
     Required for `--enable-auto-tool-choice`. You can choose any option from
@@ -158,13 +154,13 @@ class FrontendArgs:
     """Special the tool parser plugin write to parse the model-generated tool
     into OpenAI API format, the name register in this plugin can be used in
     `--tool-call-parser`."""
-    tool_server: str | None = None
+    tool_server: Optional[str] = None
     """Comma-separated list of host:port pairs (IPv4, IPv6, or hostname).
     Examples: 127.0.0.1:8000, [::1]:8000, localhost:1234. Or `demo` for demo
     purpose."""
-    log_config_file: str | None = envs.VLLM_LOGGING_CONFIG_PATH
+    log_config_file: Optional[str] = envs.VLLM_LOGGING_CONFIG_PATH
     """Path to logging config JSON file for both vllm and uvicorn"""
-    max_log_len: int | None = None
+    max_log_len: Optional[int] = None
     """Max number of prompt characters or prompt ID numbers being printed in
     log. The default of None means unlimited."""
     disable_fastapi_docs: bool = False
@@ -189,11 +185,6 @@ class FrontendArgs:
     Helps mitigate header abuse. Default: 256."""
     log_error_stack: bool = envs.VLLM_SERVER_DEV_MODE
     """If set to True, log the stack trace of error responses"""
-    tokens_only: bool = False
-    """
-    If set to True, only enable the Tokens In<>Out endpoint. 
-    This is intended for use in a Disaggregated Everything setup.
-    """
 
     @staticmethod
     def add_cli_args(parser: FlexibleArgumentParser) -> FlexibleArgumentParser:
@@ -224,11 +215,10 @@ class FrontendArgs:
         frontend_kwargs["middleware"]["default"] = []
 
         # Special case: Tool call parser shows built-in options.
-        valid_tool_parsers = list(ToolParserManager.list_registered())
+        valid_tool_parsers = list(ToolParserManager.tool_parsers.keys())
         parsers_str = ",".join(valid_tool_parsers)
         frontend_kwargs["tool_call_parser"]["metavar"] = (
-            f"{{{parsers_str}}} or name registered in --tool-parser-plugin"
-        )
+            f"{{{parsers_str}}} or name registered in --tool-parser-plugin")
 
         frontend_group = parser.add_argument_group(
             title="Frontend",
@@ -248,32 +238,27 @@ def make_arg_parser(parser: FlexibleArgumentParser) -> FlexibleArgumentParser:
     register all arguments instead of manually enumerating them here. This
     avoids code duplication and keeps the argument definitions in one place.
     """
-    parser.add_argument(
-        "model_tag",
-        type=str,
-        nargs="?",
-        help="The model tag to serve (optional if specified in config)",
-    )
+    parser.add_argument("model_tag",
+                        type=str,
+                        nargs="?",
+                        help="The model tag to serve "
+                        "(optional if specified in config)")
     parser.add_argument(
         "--headless",
         action="store_true",
         default=False,
         help="Run in headless mode. See multi-node data parallel "
-        "documentation for more details.",
-    )
-    parser.add_argument(
-        "--api-server-count",
-        "-asc",
-        type=int,
-        default=1,
-        help="How many API server processes to run.",
-    )
+        "documentation for more details.")
+    parser.add_argument("--api-server-count",
+                        "-asc",
+                        type=int,
+                        default=1,
+                        help="How many API server processes to run.")
     parser.add_argument(
         "--config",
         help="Read CLI options from a config file. "
         "Must be a YAML with the following options: "
-        "https://docs.vllm.ai/en/latest/configuration/serve_args.html",
-    )
+        "https://docs.vllm.ai/en/latest/configuration/serve_args.html")
     parser = FrontendArgs.add_cli_args(parser)
     parser = AsyncEngineArgs.add_cli_args(parser)
 
@@ -290,13 +275,14 @@ def validate_parsed_serve_args(args: argparse.Namespace):
 
     # Enable auto tool needs a tool call parser to be valid
     if args.enable_auto_tool_choice and not args.tool_call_parser:
-        raise TypeError("Error: --enable-auto-tool-choice requires --tool-call-parser")
+        raise TypeError("Error: --enable-auto-tool-choice requires "
+                        "--tool-call-parser")
     if args.enable_log_outputs and not args.enable_log_requests:
-        raise TypeError("Error: --enable-log-outputs requires --enable-log-requests")
+        raise TypeError("Error: --enable-log-outputs requires "
+                        "--enable-log-requests")
 
 
 def create_parser_for_docs() -> FlexibleArgumentParser:
     parser_for_docs = FlexibleArgumentParser(
-        prog="-m vllm.entrypoints.openai.api_server"
-    )
+        prog="-m vllm.entrypoints.openai.api_server")
     return make_arg_parser(parser_for_docs)

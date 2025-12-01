@@ -4,37 +4,19 @@
 from abc import ABC, abstractmethod
 from collections import UserDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Generic,
-    Literal,
-    NamedTuple,
-    TypeAlias,
-    TypeGuard,
-    TypeVar,
-)
+from typing import (TYPE_CHECKING, Any, Generic, Literal, NamedTuple, Optional,
+                    TypeVar, Union)
 
 import numpy as np
 import torch
-from typing_extensions import assert_never
+from typing_extensions import TypeAlias, TypeGuard, assert_never
 
-from vllm.utils.collection_utils import is_list_of
-from vllm.utils.import_utils import LazyLoader
+from vllm.utils import LazyLoader, is_list_of
 
 from .audio import AudioResampler
-from .inputs import (
-    AudioItem,
-    HfAudioItem,
-    HfImageItem,
-    HfVideoItem,
-    ImageItem,
-    ModalityData,
-    MultiModalDataDict,
-    MultiModalFieldConfig,
-    MultiModalKwargsItems,
-    VideoItem,
-)
+from .inputs import (AudioItem, HfAudioItem, HfImageItem, HfVideoItem,
+                     ImageItem, ModalityData, MultiModalDataDict,
+                     MultiModalFieldConfig, MultiModalKwargsItems, VideoItem)
 
 _T = TypeVar("_T")
 _I = TypeVar("_I")
@@ -58,7 +40,8 @@ class ModalityDataItems(ABC, Generic[_T, _I]):
         self.modality = modality
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}(modality={self.modality!r}, len={len(self)})"
+        return (f"{type(self).__name__}(modality={self.modality!r}, "
+                f"len={len(self)})")
 
     def __len__(self) -> int:
         return self.get_count()
@@ -68,7 +51,8 @@ class ModalityDataItems(ABC, Generic[_T, _I]):
 
     if TYPE_CHECKING:
         # Auto-generated
-        def __iter__(self) -> Iterator[_I]: ...
+        def __iter__(self) -> Iterator[_I]:
+            ...
 
     @abstractmethod
     def get_count(self) -> int:
@@ -111,9 +95,8 @@ class ProcessorBatchItems(ModalityDataItems[Sequence[_T], _T]):
         return {}
 
 
-class EmbeddingItems(
-    ModalityDataItems[torch.Tensor | list[torch.Tensor], torch.Tensor]
-):
+class EmbeddingItems(ModalityDataItems[Union[torch.Tensor, list[torch.Tensor]],
+                                       torch.Tensor]):
     """
     Base class for data items that are expressed as a batched embedding tensor,
     or a list of embedding tensors (one per item).
@@ -135,9 +118,8 @@ class EmbeddingItems(
         return len(self.get(item_idx))
 
 
-class DictEmbeddingItems(
-    ModalityDataItems[Mapping[str, torch.Tensor], Mapping[str, torch.Tensor]]
-):
+class DictEmbeddingItems(ModalityDataItems[Mapping[str, torch.Tensor],
+                                           Mapping[str, torch.Tensor]]):
     """
     Base class for data items that are expressed as a dictionary of tensors.
 
@@ -161,10 +143,8 @@ class DictEmbeddingItems(
         missing_required_data_keys = required_fields - data.keys()
         if missing_required_data_keys:
             data_keys = set(data.keys())
-            msg = (
-                f"The data should contain the fields: {required_fields}, "
-                f"but only found the following keys: {data_keys}"
-            )
+            msg = (f"The data should contain the fields: {required_fields}, "
+                   f"but only found the following keys: {data_keys}")
             raise ValueError(msg)
 
         fields_config = fields_factory(data)
@@ -196,7 +176,8 @@ class DictEmbeddingItems(
 
 
 class AudioProcessorItems(ProcessorBatchItems[HfAudioItem]):
-    def __init__(self, data: Sequence[HfAudioItem] | None) -> None:
+
+    def __init__(self, data: Optional[Sequence[HfAudioItem]]) -> None:
         if data is None:
             data = [None]
         super().__init__(data, "audio")
@@ -207,7 +188,8 @@ class AudioProcessorItems(ProcessorBatchItems[HfAudioItem]):
 
 
 class AudioEmbeddingItems(EmbeddingItems):
-    def __init__(self, data: torch.Tensor | list[torch.Tensor]) -> None:
+
+    def __init__(self, data: Union[torch.Tensor, list[torch.Tensor]]) -> None:
         super().__init__(data, "audio")
 
 
@@ -217,7 +199,8 @@ class ImageSize(NamedTuple):
 
 
 class ImageProcessorItems(ProcessorBatchItems[HfImageItem]):
-    def __init__(self, data: Sequence[HfImageItem] | None) -> None:
+
+    def __init__(self, data: Optional[Sequence[HfImageItem]]) -> None:
         if data is None:
             data = [None]
         super().__init__(data, "image")
@@ -235,15 +218,18 @@ class ImageProcessorItems(ProcessorBatchItems[HfImageItem]):
 
 
 class ImageEmbeddingItems(EmbeddingItems):
-    def __init__(self, data: torch.Tensor | list[torch.Tensor]) -> None:
+
+    def __init__(self, data: Union[torch.Tensor, list[torch.Tensor]]) -> None:
         super().__init__(data, "image")
 
 
 class VideoProcessorItems(ProcessorBatchItems[HfVideoItem]):
+
     def __init__(
         self,
-        data: Sequence[HfVideoItem] | None,
-        metadata: dict[str, Any] | list[dict[str, Any] | None] | None = None,
+        data: Optional[Sequence[HfVideoItem]],
+        metadata: Optional[Union[dict[str, Any],
+                                 list[Optional[dict[str, Any]]]]] = None,
     ) -> None:
         if data is None:
             data = [None]
@@ -266,7 +252,8 @@ class VideoProcessorItems(ProcessorBatchItems[HfVideoItem]):
 
 
 class VideoEmbeddingItems(EmbeddingItems):
-    def __init__(self, data: torch.Tensor | list[torch.Tensor]) -> None:
+
+    def __init__(self, data: Union[torch.Tensor, list[torch.Tensor]]) -> None:
         super().__init__(data, "video")
 
 
@@ -289,10 +276,8 @@ class MultiModalDataItems(UserDict[str, ModalityDataItems[Any, Any]]):
         if modality not in self:
             if strict:
                 available_modalities = set(self.keys())
-                raise KeyError(
-                    f"Modality {modality!r} not found. "
-                    f"Available modalities: {available_modalities}"
-                )
+                raise KeyError(f"Modality {modality!r} not found. "
+                               f"Available modalities: {available_modalities}")
 
             return 0
 
@@ -305,7 +290,7 @@ class MultiModalDataItems(UserDict[str, ModalityDataItems[Any, Any]]):
     def get_items(
         self,
         modality: str,
-        typ: type[_D] | tuple[type[_D], ...],
+        typ: Union[type[_D], tuple[type[_D], ...]],
     ) -> _D:
         """
         Get the data items belonging to a modality,
@@ -313,25 +298,20 @@ class MultiModalDataItems(UserDict[str, ModalityDataItems[Any, Any]]):
         """
         if modality not in self:
             available_modalities = set(self.keys())
-            raise KeyError(
-                f"Modality {modality!r} not found. "
-                f"Available modalities: {available_modalities}"
-            )
+            raise KeyError(f"Modality {modality!r} not found. "
+                           f"Available modalities: {available_modalities}")
 
         items = self[modality]
         if not isinstance(items, typ):
-            raise TypeError(
-                f"Invalid type of data items for {modality=}. "
-                f"Expected type: {typ}, but "
-                f"found type: {type(items)}"
-            )
+            raise TypeError(f"Invalid type of data items for {modality=}. "
+                            f"Expected type: {typ}, but "
+                            f"found type: {type(items)}")
 
         return items  # type: ignore[return-value]
 
 
-ModalityDataParser: TypeAlias = Callable[
-    [ModalityData[Any]], ModalityDataItems[Any, Any] | None
-]
+ModalityDataParser: TypeAlias = Callable[[ModalityData[Any]],
+                                         Optional[ModalityDataItems[Any, Any]]]
 
 
 class MultiModalDataParser:
@@ -347,7 +327,7 @@ class MultiModalDataParser:
     def __init__(
         self,
         *,
-        target_sr: float | None = None,
+        target_sr: Optional[float] = None,
         audio_resample_method: Literal["librosa", "scipy"] = "librosa",
         video_needs_metadata: bool = False,
     ) -> None:
@@ -359,14 +339,13 @@ class MultiModalDataParser:
         )
         self.video_needs_metadata = video_needs_metadata
 
-    @classmethod
-    def is_embeddings(
-        cls, data: object
-    ) -> TypeGuard[torch.Tensor | list[torch.Tensor]]:
+    def _is_embeddings(
+            self, data: object
+    ) -> TypeGuard[Union[torch.Tensor, list[torch.Tensor]]]:
         if isinstance(data, torch.Tensor):
             return data.ndim == 3
         if is_list_of(data, torch.Tensor):
-            return data[0].ndim == 2  # type: ignore[index]
+            return data[0].ndim == 2
 
         return False
 
@@ -381,7 +360,7 @@ class MultiModalDataParser:
     def _get_audio_with_sr(
         self,
         audio: AudioItem,
-    ) -> tuple[np.ndarray, float | None]:
+    ) -> tuple[np.ndarray, Optional[float]]:
         if isinstance(audio, tuple):
             return audio
         if isinstance(audio, list):
@@ -396,7 +375,7 @@ class MultiModalDataParser:
     def _get_video_with_metadata(
         self,
         video: VideoItem,
-    ) -> tuple[np.ndarray, dict[str, Any] | None]:
+    ) -> tuple[np.ndarray, Optional[dict[str, Any]]]:
         if isinstance(video, tuple):
             return video
         if isinstance(video, list):
@@ -411,31 +390,27 @@ class MultiModalDataParser:
     def _parse_audio_data(
         self,
         data: ModalityData[AudioItem],
-    ) -> ModalityDataItems[Any, Any] | None:
+    ) -> Optional[ModalityDataItems[Any, Any]]:
         if data is None:
             return AudioProcessorItems(None)
 
         # also check single audio item with sampling rate
-        if self._is_empty(data) or (
-            isinstance(data, tuple) and self._is_empty(data[0])
-        ):
+        if self._is_empty(data) or (isinstance(data, tuple)
+                                    and self._is_empty(data[0])):
             return None
 
-        if self.is_embeddings(data):
+        if self._is_embeddings(data):
             return AudioEmbeddingItems(data)
 
-        data_items: list[AudioItem]
-        if (
-            is_list_of(data, float)
-            or isinstance(data, (np.ndarray, torch.Tensor))
-            and data.ndim == 1
-            or isinstance(data, tuple)
-        ):
+        if (is_list_of(data, float)
+                or isinstance(data,
+                              (np.ndarray, torch.Tensor)) and data.ndim == 1
+                or isinstance(data, tuple)):
             data_items = [data]
         elif isinstance(data, (np.ndarray, torch.Tensor)):
             data_items = [elem for elem in data]
         else:
-            data_items = data  # type: ignore[assignment]
+            data_items = data
 
         new_audios = list[np.ndarray]()
         for data_item in data_items:
@@ -443,7 +418,8 @@ class MultiModalDataParser:
             if orig_sr is None:
                 new_audio = audio
             else:
-                new_audio = self.audio_resampler.resample(audio, orig_sr=orig_sr)
+                new_audio = self.audio_resampler.resample(audio,
+                                                          orig_sr=orig_sr)
 
             new_audios.append(new_audio)
 
@@ -452,21 +428,19 @@ class MultiModalDataParser:
     def _parse_image_data(
         self,
         data: ModalityData[ImageItem],
-    ) -> ModalityDataItems[Any, Any] | None:
+    ) -> Optional[ModalityDataItems[Any, Any]]:
         if data is None:
             return ImageProcessorItems(None)
 
         if self._is_empty(data):
             return None
 
-        if self.is_embeddings(data):
+        if self._is_embeddings(data):
             return ImageEmbeddingItems(data)
 
-        if (
-            isinstance(data, PILImage.Image)
-            or isinstance(data, (np.ndarray, torch.Tensor))
-            and data.ndim == 3
-        ):
+        if (isinstance(data, PILImage.Image)
+                or isinstance(data,
+                              (np.ndarray, torch.Tensor)) and data.ndim == 3):
             data_items = [data]
         elif isinstance(data, (np.ndarray, torch.Tensor)):
             data_items = [elem for elem in data]
@@ -478,40 +452,32 @@ class MultiModalDataParser:
     def _parse_video_data(
         self,
         data: ModalityData[VideoItem],
-    ) -> ModalityDataItems[Any, Any] | None:
+    ) -> Optional[ModalityDataItems[Any, Any]]:
         if data is None:
             return VideoProcessorItems(None)
 
         if self._is_empty(data):
             return None
 
-        if self.is_embeddings(data):
+        if self._is_embeddings(data):
             return VideoEmbeddingItems(data)
 
-        data_items: list[VideoItem]
-        if (
-            is_list_of(data, PILImage.Image)
-            or isinstance(data, (np.ndarray, torch.Tensor))
-            and data.ndim == 4
-        ):
+        if (is_list_of(data, PILImage.Image)
+                or isinstance(data,
+                              (np.ndarray, torch.Tensor)) and data.ndim == 4):
             data_items = [data]
         elif isinstance(data, (np.ndarray, torch.Tensor)):
             data_items = [elem for elem in data]
         elif isinstance(data, tuple) and len(data) == 2:
             data_items = [data]
         else:
-            data_items = data  # type: ignore[assignment]
+            data_items = data
 
-        new_videos = list[tuple[np.ndarray, dict[str, Any] | None]]()
-        metadata_lst: list[dict[str, Any] | None] = []
+        new_videos = list[tuple[np.ndarray, Optional[dict[str, Any]]]]()
+        metadata_lst: list[Optional[dict[str, Any]]] = []
         for data_item in data_items:
             video, metadata = self._get_video_with_metadata(data_item)
             if self.video_needs_metadata:
-                if metadata is None:
-                    raise ValueError(
-                        "Video metadata is required but not found in mm input. "
-                        "Please check your video input in `multi_modal_data`"
-                    )
                 new_videos.append((video, metadata))
                 metadata_lst.append(metadata)
             else:
@@ -529,7 +495,8 @@ class MultiModalDataParser:
             "video": self._parse_video_data,
         }
 
-    def parse_mm_data(self, mm_data: MultiModalDataDict) -> MultiModalDataItems:
+    def parse_mm_data(self,
+                      mm_data: MultiModalDataDict) -> MultiModalDataItems:
         subparsers = self._get_subparsers()
 
         mm_items = MultiModalDataItems()

@@ -9,16 +9,17 @@ import pytest
 from vllm.model_executor.layers.mamba.mamba_mixer import MambaMixer
 from vllm.model_executor.layers.mamba.mamba_mixer2 import MambaMixer2
 from vllm.model_executor.layers.mamba.short_conv import ShortConv
-from vllm.model_executor.models.minimax_text_01 import MiniMaxText01LinearAttention
+from vllm.model_executor.models.minimax_text_01 import (
+    MiniMaxText01LinearAttention)
 from vllm.v1.attention.backends.linear_attn import LinearAttentionBackend
 from vllm.v1.attention.backends.mamba1_attn import Mamba1AttentionBackend
 from vllm.v1.attention.backends.mamba2_attn import Mamba2AttentionBackend
-from vllm.v1.attention.backends.short_conv_attn import ShortConvAttentionBackend
+from vllm.v1.attention.backends.short_conv_attn import (
+    ShortConvAttentionBackend)
 
 
 @pytest.mark.parametrize(
-    "layer_class, init_kwargs, expected_backend, expected_mamba_type",
-    [
+    "layer_class, init_kwargs, expected_backend, expected_mamba_type", [
         (
             MambaMixer,
             dict(
@@ -76,11 +77,9 @@ from vllm.v1.attention.backends.short_conv_attn import ShortConvAttentionBackend
             ShortConvAttentionBackend,
             "short_conv",
         ),
-    ],
-)
-def test_mamba_layers_get_attn_backend(
-    dist_init, layer_class, init_kwargs, expected_backend, expected_mamba_type
-):
+    ])
+def test_mamba_layers_get_attn_backend(dist_init, layer_class, init_kwargs,
+                                       expected_backend, expected_mamba_type):
     """Test that Mamba-like layers return the correct attention backend."""
     layer = layer_class(**init_kwargs)
 
@@ -89,23 +88,17 @@ def test_mamba_layers_get_attn_backend(
     assert layer.mamba_type == expected_mamba_type
 
 
-@pytest.mark.parametrize(
-    "layer_class,expected_backend,expected_mamba_type",
-    [
-        (MambaMixer, Mamba1AttentionBackend, "mamba1"),
-        (MambaMixer2, Mamba2AttentionBackend, "mamba2"),
-        (MiniMaxText01LinearAttention, LinearAttentionBackend, "linear_attention"),
-        (ShortConv, ShortConvAttentionBackend, "short_conv"),
-    ],
-)
-def test_mamba_layers_have_unified_interface(
-    layer_class, expected_backend, expected_mamba_type
-):
-    """Test that all Mamba layers have the unified get_attn_backend
+@pytest.mark.parametrize("layer_class,expected_backend,expected_mamba_type", [
+    (MambaMixer, Mamba1AttentionBackend, "mamba1"),
+    (MambaMixer2, Mamba2AttentionBackend, "mamba2"),
+    (MiniMaxText01LinearAttention, LinearAttentionBackend, "linear_attention"),
+    (ShortConv, ShortConvAttentionBackend, "short_conv"),
+])
+def test_mamba_layers_have_unified_interface(layer_class, expected_backend,
+                                             expected_mamba_type):
+    """Test that all Mamba layers have the unified get_attn_backend 
     interface."""
-    assert hasattr(layer_class, "get_attn_backend"), (
-        f"{layer_class.__name__} should have get_attn_backend method"
-    )
-    assert hasattr(layer_class, "mamba_type"), (
-        f"{layer_class.__name__} should have mamba_type property"
-    )
+    assert hasattr(layer_class, 'get_attn_backend'), (
+        f"{layer_class.__name__} should have get_attn_backend method")
+    assert hasattr(layer_class, 'mamba_type'), (
+        f"{layer_class.__name__} should have mamba_type property")

@@ -23,7 +23,7 @@ import logging
 import os
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from typing import Callable, Optional
 
 import aiohttp
 import requests
@@ -49,9 +49,12 @@ class Proxy:
         decode_instances: list[str],
         model: str,
         scheduling_policy: SchedulingPolicy,
-        custom_create_completion: Callable[[Request], StreamingResponse] | None = None,
-        custom_create_chat_completion: Callable[[Request], StreamingResponse]
-        | None = None,
+        custom_create_completion: Optional[
+            Callable[[Request], StreamingResponse]
+        ] = None,
+        custom_create_chat_completion: Optional[
+            Callable[[Request], StreamingResponse]
+        ] = None,
     ):
         self.prefill_instances = prefill_instances
         self.decode_instances = decode_instances
@@ -200,9 +203,9 @@ class Proxy:
                 async with session.post(
                     url=url, json=data, headers=headers
                 ) as response:
-                    if 200 <= response.status < 300 or 400 <= response.status < 500:
+                    if 200 <= response.status < 300 or 400 <= response.status < 500:  # noqa: E501
                         if use_chunked:
-                            async for chunk_bytes in response.content.iter_chunked(
+                            async for chunk_bytes in response.content.iter_chunked(  # noqa: E501
                                 1024
                             ):
                                 yield chunk_bytes
@@ -345,9 +348,9 @@ class ProxyServer:
     def __init__(
         self,
         args: argparse.Namespace,
-        scheduling_policy: SchedulingPolicy | None = None,
-        create_completion: Callable[[Request], StreamingResponse] | None = None,
-        create_chat_completion: Callable[[Request], StreamingResponse] | None = None,
+        scheduling_policy: Optional[SchedulingPolicy] = None,
+        create_completion: Optional[Callable[[Request], StreamingResponse]] = None,
+        create_chat_completion: Optional[Callable[[Request], StreamingResponse]] = None,
     ):
         self.validate_parsed_serve_args(args)
         self.port = args.port

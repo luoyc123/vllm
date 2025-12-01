@@ -31,19 +31,20 @@ import time
 import uuid
 import warnings
 from collections.abc import AsyncGenerator
-from contextlib import nullcontext
 from dataclasses import dataclass
+from typing import Optional
 
 import datasets
 import numpy as np
 import pandas as pd
+from tqdm.asyncio import tqdm
+from transformers import PreTrainedTokenizerBase
+
 from backend_request_func import (
     ASYNC_REQUEST_FUNCS,
     RequestFuncInput,
     RequestFuncOutput,
 )
-from tqdm.asyncio import tqdm
-from transformers import PreTrainedTokenizerBase
 
 try:
     from vllm.transformers_utils.tokenizer import get_tokenizer
@@ -51,7 +52,7 @@ except ImportError:
     from backend_request_func import get_tokenizer
 
 try:
-    from vllm.utils.argparse_utils import FlexibleArgumentParser
+    from vllm.utils import FlexibleArgumentParser
 except ImportError:
     from argparse import ArgumentParser as FlexibleArgumentParser
 
@@ -316,7 +317,7 @@ def calculate_metrics(
     tokenizer: PreTrainedTokenizerBase,
     selected_percentile_metrics: list[str],
     selected_percentiles: list[float],
-    goodput_config_dict: dict[str, float] | None = None,
+    goodput_config_dict: Optional[dict[str, float]] = None,
 ) -> tuple[BenchmarkMetrics, list[int]]:
     actual_output_lens: list[int] = []
     total_input = 0
@@ -436,9 +437,9 @@ async def benchmark(
     selected_percentile_metrics: list[str],
     selected_percentiles: list[str],
     ignore_eos: bool,
-    max_concurrency: int | None,
+    max_concurrency: Optional[int],
     structured_output_ratio: float,
-    goodput_config_dict: dict[str, float] | None = None,
+    goodput_config_dict: Optional[dict[str, float]] = None,
 ):
     if backend in ASYNC_REQUEST_FUNCS:
         request_func = ASYNC_REQUEST_FUNCS[backend]
@@ -502,9 +503,15 @@ async def benchmark(
 
     pbar = None if disable_tqdm else tqdm(total=len(input_requests))
 
-    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else nullcontext()
+    # This can be used once the minimum Python version is 3.10 or higher,
+    # and it will simplify the code in limited_request_func.
+    #    semaphore = (asyncio.Semaphore(max_concurrency)
+    #                 if max_concurrency else contextlib.nullcontext())
+    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
 
     async def limited_request_func(request_func_input, pbar):
+        if semaphore is None:
+            return await request_func(request_func_input=request_func_input, pbar=pbar)
         async with semaphore:
             return await request_func(request_func_input=request_func_input, pbar=pbar)
 
@@ -903,13 +910,13 @@ def create_argument_parser():
     parser.add_argument(
         "--tokenizer",
         type=str,
-        help="Name or path of the tokenizer, if not using the default tokenizer.",
+        help="Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
     )
     parser.add_argument(
         "--tokenizer-mode",
         type=str,
         default="auto",
-        help="Name or path of the tokenizer, if not using the default tokenizer.",
+        help="Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
     )
     parser.add_argument(
         "--num-prompts",

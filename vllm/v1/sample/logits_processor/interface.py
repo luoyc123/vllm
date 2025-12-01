@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional
 import torch
 
 from vllm import SamplingParams
+from vllm.v1.core.sched.batch_manager import HybridSchedulerMetadata
 
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
@@ -26,17 +27,17 @@ RemovedRequest = int
 
 # (index, params, prompt_tok_ids, output_tok_ids) tuples for new
 # requests added to the batch.
-AddedRequest = tuple[int, SamplingParams, list[int] | None, list[int]]
+AddedRequest = tuple[int, SamplingParams, Optional[list[int]], list[int], HybridSchedulerMetadata]
 
 # (index 1, index 2, directionality) tuples representing
 # one-way moves or two-way swaps of requests in batch
 MovedRequest = tuple[int, int, MoveDirectionality]
 
+UpdatedRequest = tuple[int, SamplingParams, HybridSchedulerMetadata]
 
 @dataclass(frozen=True)
 class BatchUpdate:
     """Persistent batch state change info for logitsprocs"""
-
     batch_size: int  # Current num reqs in batch
 
     # Metadata for requests added to, removed from, and moved
@@ -55,21 +56,14 @@ class BatchUpdate:
     removed: Sequence[RemovedRequest]
     added: Sequence[AddedRequest]
     moved: Sequence[MovedRequest]
+    updated: Sequence[UpdatedRequest]
 
 
 class LogitsProcessor(ABC):
-    @classmethod
-    def validate_params(cls, sampling_params: SamplingParams):
-        """Validate sampling params for this logits processor.
-
-        Raise ValueError for invalid ones.
-        """
-        return None
 
     @abstractmethod
-    def __init__(
-        self, vllm_config: "VllmConfig", device: torch.device, is_pin_memory: bool
-    ) -> None:
+    def __init__(self, vllm_config: "VllmConfig", device: torch.device,
+                 is_pin_memory: bool) -> None:
         raise NotImplementedError
 
     @abstractmethod

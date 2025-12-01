@@ -1,15 +1,21 @@
 # ruff: noqa: E501
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
+from __future__ import annotations
+
 import argparse
 import asyncio
 import enum
 import os
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import openai
 import pydantic
-from openai.types.chat import ChatCompletionChunk
+
+if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletionChunk
+
 
 ConstraintsFormat = Literal[
     "choice",
@@ -33,7 +39,7 @@ async def print_stream_response(
     async for chunk in stream_response:
         delta = chunk.choices[0].delta
 
-        reasoning_chunk_text: str | None = getattr(delta, "reasoning", None)
+        reasoning_chunk_text: str | None = getattr(delta, "reasoning_content", None)
         content_chunk_text = delta.content
 
         if args.reasoning:
@@ -255,8 +261,8 @@ async def cli():
         for constraint, response in zip(constraints, results):
             print(f"\n\n{constraint}:")
             message = response.choices[0].message
-            if args.reasoning and hasattr(message, "reasoning"):
-                print(f"  Reasoning: {message.reasoning or ''}")
+            if args.reasoning and hasattr(message, "reasoning_content"):
+                print(f"  Reasoning: {message.reasoning_content or ''}")
             print(f"  Content: {message.content!r}")
 
 

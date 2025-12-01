@@ -63,7 +63,7 @@ If successful, you should be returned a CURL command that you can call inference
 
 ??? console "Command"
 
-    ```bash
+    ```python
     curl -X POST https://api.cortex.cerebrium.ai/v4/p-xxxxxx/vllm/run \
     -H 'Content-Type: application/json' \
     -H 'Authorization: <JWT TOKEN>' \
@@ -81,7 +81,7 @@ You should get a response like:
 
 ??? console "Response"
 
-    ```json
+    ```python
     {
         "run_id": "52911756-3066-9ae8-bcc9-d9129d1bd262",
         "result": {

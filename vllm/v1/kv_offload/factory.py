@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import importlib
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from vllm.logger import init_logger
 from vllm.v1.kv_offload.spec import OffloadingSpec
@@ -17,7 +16,8 @@ class OffloadingSpecFactory:
     _registry: dict[str, Callable[[], type[OffloadingSpec]]] = {}
 
     @classmethod
-    def register_spec(cls, name: str, module_path: str, class_name: str) -> None:
+    def register_spec(cls, name: str, module_path: str,
+                      class_name: str) -> None:
         """Register a spec with a lazy-loading module and class name."""
         if name in cls._registry:
             raise ValueError(f"Connector '{name}' is already registered.")
@@ -51,6 +51,6 @@ class OffloadingSpecFactory:
 
 
 # Register various specs here.
-OffloadingSpecFactory.register_spec(
-    "CPUOffloadingSpec", "vllm.v1.kv_offload.cpu", "CPUOffloadingSpec"
-)
+OffloadingSpecFactory.register_spec("CPUOffloadingSpec",
+                                    "vllm.v1.kv_offload.cpu",
+                                    "CPUOffloadingSpec")

@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-from typing import Any
+from typing import Any, Optional, Union
 
 import msgspec
 import zmq
 from msgspec.msgpack import Decoder
 
-from vllm.v1.core.kv_cache_utils import ExternalBlockHash
+from vllm.v1.core.kv_cache_utils import BlockHash
 
 
 #
@@ -24,17 +24,17 @@ class KVCacheEvent(
 
 
 class BlockStored(KVCacheEvent):
-    block_hashes: list[ExternalBlockHash]
-    parent_block_hash: ExternalBlockHash | None
+    block_hashes: list[BlockHash]
+    parent_block_hash: Optional[BlockHash]
     token_ids: list[int]
     block_size: int
-    lora_id: int | None
-    medium: str | None
+    lora_id: Optional[int]
+    medium: Optional[str]
 
 
 class BlockRemoved(KVCacheEvent):
-    block_hashes: list[ExternalBlockHash]
-    medium: str | None
+    block_hashes: list[BlockHash]
+    medium: Optional[str]
 
 
 class AllBlocksCleared(KVCacheEvent):
@@ -42,7 +42,7 @@ class AllBlocksCleared(KVCacheEvent):
 
 
 class KVEventBatch(EventBatch):
-    events: list[BlockStored | BlockRemoved | AllBlocksCleared]
+    events: list[Union[BlockStored, BlockRemoved, AllBlocksCleared]]
 
 
 def process_event(event_batch):

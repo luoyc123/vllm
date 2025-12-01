@@ -17,45 +17,46 @@ mxbai_rerank_hf_overrides = {
 }
 
 RERANK_MODELS = [
-    LASTPoolingRerankModelInfo(
-        "mixedbread-ai/mxbai-rerank-base-v2",
-        architecture="Qwen2ForSequenceClassification",
-        hf_overrides=mxbai_rerank_hf_overrides,
-        mteb_score=0.273,
-        enable_test=True,
-    ),
-    LASTPoolingRerankModelInfo(
-        "mixedbread-ai/mxbai-rerank-large-v2",
-        architecture="Qwen2ForSequenceClassification",
-        hf_overrides=mxbai_rerank_hf_overrides,
-        enable_test=False,
-    ),
+    LASTPoolingRerankModelInfo("mixedbread-ai/mxbai-rerank-base-v2",
+                               architecture="Qwen2ForSequenceClassification",
+                               hf_overrides=mxbai_rerank_hf_overrides,
+                               mteb_score=0.273,
+                               enable_test=True),
+    LASTPoolingRerankModelInfo("mixedbread-ai/mxbai-rerank-large-v2",
+                               architecture="Qwen2ForSequenceClassification",
+                               hf_overrides=mxbai_rerank_hf_overrides,
+                               enable_test=False)
 ]
 
 
 class MxbaiRerankerHfRunner(HfRunner):
-    def __init__(
-        self, model_name: str, dtype: str = "auto", *args: Any, **kwargs: Any
-    ) -> None:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    def __init__(self,
+                 model_name: str,
+                 dtype: str = "auto",
+                 *args: Any,
+                 **kwargs: Any) -> None:
+        from transformers import AutoModelForCausalLM, AutoTokenizer
         super().__init__(model_name, dtype, auto_cls=AutoModelForCausalLM)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name,
+                                                       padding_side='left')
         self.yes_loc = self.tokenizer.convert_tokens_to_ids("1")
         self.no_loc = self.tokenizer.convert_tokens_to_ids("0")
 
-    def predict(self, prompts: list[list[str]], *args, **kwargs) -> torch.Tensor:
+    def predict(self, prompts: list[list[str]], *args,
+                **kwargs) -> torch.Tensor:
+
         def process_inputs(pairs):
-            inputs = self.tokenizer(
-                pairs,
-                padding=False,
-                truncation="longest_first",
-                return_attention_mask=False,
-            )
-            for i, ele in enumerate(inputs["input_ids"]):
-                inputs["input_ids"][i] = ele
-            inputs = self.tokenizer.pad(inputs, padding=True, return_tensors="pt")
+            inputs = self.tokenizer(pairs,
+                                    padding=False,
+                                    truncation='longest_first',
+                                    return_attention_mask=False)
+            for i, ele in enumerate(inputs['input_ids']):
+                inputs['input_ids'][i] = ele
+            inputs = self.tokenizer.pad(inputs,
+                                        padding=True,
+                                        return_tensors="pt")
             for key in inputs:
                 inputs[key] = inputs[key].to(self.model.device)
             return inputs
@@ -70,9 +71,8 @@ class MxbaiRerankerHfRunner(HfRunner):
             return scores
 
         scores = []
-        for query, doc, *_ in prompts:
-            pairs = [(query, doc)]
-            inputs = process_inputs(pairs)
+        for prompt in prompts:
+            inputs = process_inputs([prompt])
             score = compute_logits(inputs)
             scores.append(score[0].item())
         return torch.Tensor(scores)

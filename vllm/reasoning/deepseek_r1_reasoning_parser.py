@@ -2,11 +2,14 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from collections.abc import Sequence
+from typing import Union
 
 from vllm.entrypoints.openai.protocol import DeltaMessage
+from vllm.reasoning.abs_reasoning_parsers import ReasoningParserManager
 from vllm.reasoning.basic_parsers import BaseThinkingReasoningParser
 
 
+@ReasoningParserManager.register_module("deepseek_r1")
 class DeepSeekR1ReasoningParser(BaseThinkingReasoningParser):
     """
     Reasoning parser for DeepSeek R1 model.
@@ -25,7 +28,7 @@ class DeepSeekR1ReasoningParser(BaseThinkingReasoningParser):
         """The token that ends reasoning content."""
         return "</think>"
 
-    def extract_reasoning_streaming(
+    def extract_reasoning_content_streaming(
         self,
         previous_text: str,
         current_text: str,
@@ -33,8 +36,8 @@ class DeepSeekR1ReasoningParser(BaseThinkingReasoningParser):
         previous_token_ids: Sequence[int],
         current_token_ids: Sequence[int],
         delta_token_ids: Sequence[int],
-    ) -> DeltaMessage | None:
-        ret = super().extract_reasoning_streaming(
+    ) -> Union[DeltaMessage, None]:
+        ret = super().extract_reasoning_content_streaming(
             previous_text,
             current_text,
             delta_text,
@@ -42,19 +45,16 @@ class DeepSeekR1ReasoningParser(BaseThinkingReasoningParser):
             current_token_ids,
             delta_token_ids,
         )
-        if (
-            ret is not None
-            and self.start_token_id not in previous_token_ids
-            and self.start_token_id not in delta_token_ids
-        ):
+        if (ret is not None and self.start_token_id not in previous_token_ids
+                and self.start_token_id not in delta_token_ids):
             if self.end_token_id in delta_token_ids:
                 # end token in delta with more tokens,
                 # extract reasoning content and content
                 end_index = delta_text.find(self.end_token)
-                reasoning = delta_text[:end_index]
-                content = delta_text[end_index + len(self.end_token) :]
+                reasoning_content = delta_text[:end_index]
+                content = delta_text[end_index + len(self.end_token):]
                 return DeltaMessage(
-                    reasoning=reasoning,
+                    reasoning_content=reasoning_content,
                     content=content if content else None,
                 )
             elif self.end_token_id in previous_token_ids:
@@ -62,6 +62,6 @@ class DeepSeekR1ReasoningParser(BaseThinkingReasoningParser):
                 return DeltaMessage(content=delta_text)
             else:
                 # no end token in previous or delta, reasoning content continues
-                return DeltaMessage(reasoning=delta_text)
+                return DeltaMessage(reasoning_content=delta_text)
 
         return ret

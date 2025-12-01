@@ -30,6 +30,7 @@ The class provides the following primitives:
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Optional
 
 from vllm.v1.core.kv_cache_utils import BlockHash
 
@@ -67,6 +68,7 @@ class OffloadingEvent:
 
 
 class OffloadingManager(ABC):
+
     @abstractmethod
     def lookup(self, block_hashes: Iterable[BlockHash]) -> int:
         """
@@ -120,8 +122,8 @@ class OffloadingManager(ABC):
 
     @abstractmethod
     def prepare_store(
-        self, block_hashes: Iterable[BlockHash]
-    ) -> PrepareStoreOutput | None:
+            self,
+            block_hashes: Iterable[BlockHash]) -> Optional[PrepareStoreOutput]:
         """
         Prepare the given blocks to be offloaded.
         The given blocks will be protected from eviction until
@@ -138,7 +140,9 @@ class OffloadingManager(ABC):
         """
         pass
 
-    def complete_store(self, block_hashes: Iterable[BlockHash], success: bool = True):
+    def complete_store(self,
+                       block_hashes: Iterable[BlockHash],
+                       success: bool = True):
         """
         Marks blocks which were previously prepared to be stored, as stored.
         Following this call, the blocks become loadable.

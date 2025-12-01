@@ -22,47 +22,48 @@ def qwen3_tokenizer():
 # 带 <think></think>，非stream
 WITH_THINK = {
     "output": "<think>This is a reasoning section</think>This is the rest",
-    "reasoning": "This is a reasoning section",
+    "reasoning_content": "This is a reasoning section",
     "content": "This is the rest",
 }
 # 带 <think></think>，stream
 WITH_THINK_STREAM = {
     "output": "<think>This is a reasoning section</think>This is the rest",
-    "reasoning": "This is a reasoning section",
+    "reasoning_content": "This is a reasoning section",
     "content": "This is the rest",
 }
 # 不带 <think></think>，非stream
 WITHOUT_THINK = {
     "output": "This is the rest",
-    "reasoning": None,
+    "reasoning_content": None,
     "content": "This is the rest",
 }
 # 不带 <think></think>，stream
 WITHOUT_THINK_STREAM = {
     "output": "This is the rest",
-    "reasoning": None,
+    "reasoning_content": None,
     "content": "This is the rest",
 }
 
 COMPLETE_REASONING = {
     "output": "<think>This is a reasoning section</think>",
-    "reasoning": "This is a reasoning section",
+    "reasoning_content": "This is a reasoning section",
     "content": None,
 }
 MULTILINE_REASONING = {
-    "output": "<think>This is a reasoning\nsection</think>This is the rest\nThat",
-    "reasoning": "This is a reasoning\nsection",
+    "output":
+    "<think>This is a reasoning\nsection</think>This is the rest\nThat",
+    "reasoning_content": "This is a reasoning\nsection",
     "content": "This is the rest\nThat",
 }
 ONLY_OPEN_TAG = {
     "output": "<think>This is a reasoning section",
-    "reasoning": None,
+    "reasoning_content": None,
     "content": "<think>This is a reasoning section",
 }
 
 ONLY_OPEN_TAG_STREAM = {
     "output": "<think>This is a reasoning section",
-    "reasoning": "This is a reasoning section",
+    "reasoning_content": "This is a reasoning section",
     "content": None,
 }
 
@@ -130,13 +131,12 @@ def test_reasoning(
     output_tokens: list[str] = [
         qwen3_tokenizer.convert_tokens_to_string([token]) for token in output
     ]
-    parser: ReasoningParser = ReasoningParserManager.get_reasoning_parser(parser_name)(
-        qwen3_tokenizer
-    )
+    parser: ReasoningParser = ReasoningParserManager.get_reasoning_parser(
+        parser_name)(qwen3_tokenizer)
 
-    reasoning, content = run_reasoning_extraction(
-        parser, output_tokens, streaming=streaming
-    )
+    reasoning, content = run_reasoning_extraction(parser,
+                                                  output_tokens,
+                                                  streaming=streaming)
 
-    assert reasoning == param_dict["reasoning"]
+    assert reasoning == param_dict["reasoning_content"]
     assert content == param_dict["content"]

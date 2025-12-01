@@ -4,7 +4,8 @@
 This file demonstrates the usage of text generation with an LLM model,
 comparing the performance with and without speculative decoding.
 
-Note that this example is out of date and not supported in vLLM v1.
+Note that still not support `v1`:
+VLLM_USE_V1=0 python examples/offline_inference/mlpspeculator.py
 """
 
 import gc

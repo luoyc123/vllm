@@ -3,9 +3,10 @@
 
 import pickle as pkl
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import product
+from typing import Callable, Optional
 
 import torch
 import torch.utils.benchmark as TBenchmark
@@ -50,7 +51,7 @@ def get_bench_params() -> list[bench_params_t]:
 def unfused_int8_impl(
     rms_norm_layer: RMSNorm,
     x: torch.Tensor,
-    residual: torch.Tensor | None,
+    residual: Optional[torch.Tensor],
     quant_dtype: torch.dtype,
 ):
     # Norm
@@ -67,7 +68,7 @@ def unfused_int8_impl(
 def unfused_fp8_impl(
     rms_norm_layer: RMSNorm,
     x: torch.Tensor,
-    residual: torch.Tensor | None,
+    residual: Optional[torch.Tensor],
     quant_dtype: torch.dtype,
 ):
     # Norm
@@ -84,7 +85,7 @@ def unfused_fp8_impl(
 def fused_impl(
     rms_norm_layer: RMSNorm,  # this stores the weights
     x: torch.Tensor,
-    residual: torch.Tensor | None,
+    residual: Optional[torch.Tensor],
     quant_dtype: torch.dtype,
 ):
     out, _ = ops.rms_norm_dynamic_per_token_quant(
