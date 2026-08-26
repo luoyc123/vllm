@@ -1,0 +1,4 @@
+mode=two-process TCP-loopback acknowledgment=after-full-receive endpoint=127.0.0.1:33793
+size_MiB=1 iterations=128 total_GiB=0.125 aggregate_GBps=3.518 p50_ms=0.266 p50_GBps=3.935 p95_ms=0.538 p95_GBps=1.948
+size_MiB=16 iterations=32 total_GiB=0.500 aggregate_GBps=4.639 p50_ms=3.612 p50_GBps=4.645 p95_ms=3.650 p95_GBps=4.597
+size_MiB=64 iterations=16 total_GiB=1.000 aggregate_GBps=4.685 p50_ms=14.324 p50_GBps=4.685 p95_ms=14.618 p95_GBps=4.591
