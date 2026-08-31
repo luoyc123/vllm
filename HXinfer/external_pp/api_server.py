@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib
+import json
 import time
 import uuid
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from threading import Lock
 from typing import Any
 
 
@@ -19,6 +20,26 @@ def resolve_executor_backend(value: str):
     return getattr(importlib.import_module(module_name), class_name)
 
 
+def _message_content_as_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if (
+                not isinstance(part, dict)
+                or part.get("type") != "text"
+                or not isinstance(part.get("text"), str)
+            ):
+                raise ValueError(
+                    "this prototype only supports text message content parts"
+                )
+            parts.append(part["text"])
+        if parts:
+            return "".join(parts)
+    raise ValueError("message content must be text or a non-empty text-part list")
+
+
 def _messages_from_request(body: dict[str, Any]) -> list[dict[str, str]]:
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
@@ -28,21 +49,25 @@ def _messages_from_request(body: dict[str, Any]) -> list[dict[str, str]]:
         if not isinstance(message, dict):
             raise ValueError("each message must be an object")  # noqa: TRY004
         role = message.get("role")
-        content = message.get("content")
         if role not in {"system", "user", "assistant", "tool"}:
             raise ValueError(f"unsupported message role: {role!r}")
-        if not isinstance(content, str):
-            raise ValueError(  # noqa: TRY004
-                "this prototype currently requires string message content"
-            )
+        content = _message_content_as_text(message.get("content"))
         normalized.append({"role": role, "content": content})
     return normalized
 
 
-def _sampling_params(body: dict[str, Any], default_max_tokens: int):
+def _sampling_params(
+    body: dict[str, Any],
+    default_max_tokens: int,
+    *,
+    stream: bool = False,
+):
     from vllm import SamplingParams
+    from vllm.sampling_params import RequestOutputKind
 
-    max_tokens = body.get("max_tokens", default_max_tokens)
+    max_tokens = body.get(
+        "max_completion_tokens", body.get("max_tokens", default_max_tokens)
+    )
     temperature = body.get("temperature", 1.0)
     top_p = body.get("top_p", 1.0)
     seed = body.get("seed")
@@ -63,7 +88,162 @@ def _sampling_params(body: dict[str, Any], default_max_tokens: int):
         max_tokens=max_tokens,
         seed=seed,
         stop=stop,
+        output_kind=(
+            RequestOutputKind.DELTA
+            if stream
+            else RequestOutputKind.FINAL_ONLY
+        ),
     )
+
+
+def _sse(payload: dict[str, Any] | str) -> str:
+    data = (
+        payload
+        if isinstance(payload, str)
+        else json.dumps(payload, ensure_ascii=False)
+    )
+    return f"data: {data}\n\n"
+
+
+def _usage(prompt_tokens: int, completion_tokens: int) -> dict[str, int]:
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+async def _chat_prompt(engine, messages: list[dict[str, str]]) -> str:
+    tokenizer = engine.get_tokenizer()
+    prompt = await asyncio.to_thread(
+        tokenizer.apply_chat_template,
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    if not isinstance(prompt, str):
+        raise ValueError("chat template did not produce a text prompt")
+    return prompt
+
+
+async def _collect_final(engine, prompt: str, sampling_params, request_id: str):
+    final_output = None
+    async for output in engine.generate(prompt, sampling_params, request_id):
+        final_output = output
+    if final_output is None:
+        raise RuntimeError("engine completed without a response")
+    return final_output
+
+
+async def _stream_chat(
+    engine,
+    prompt: str,
+    sampling_params,
+    request_id: str,
+    created: int,
+    model: str,
+    include_usage: bool,
+) -> AsyncGenerator[str, None]:
+    prompt_tokens = 0
+    completion_tokens = 0
+    first_output = True
+    async for output in engine.generate(prompt, sampling_params, request_id):
+        if output.prompt_token_ids is not None:
+            prompt_tokens = len(output.prompt_token_ids)
+        generated = output.outputs[0]
+        if first_output:
+            first_output = False
+            yield _sse(
+                {
+                    "id": request_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": ""},
+                            "logprobs": None,
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        completion_tokens += len(generated.token_ids)
+        yield _sse(
+            {
+                "id": request_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": generated.text},
+                        "logprobs": None,
+                        "finish_reason": generated.finish_reason,
+                    }
+                ],
+            }
+        )
+    if include_usage:
+        yield _sse(
+            {
+                "id": request_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [],
+                "usage": _usage(prompt_tokens, completion_tokens),
+            }
+        )
+    yield _sse("[DONE]")
+
+
+async def _stream_completion(
+    engine,
+    prompt: str,
+    sampling_params,
+    request_id: str,
+    created: int,
+    model: str,
+    include_usage: bool,
+) -> AsyncGenerator[str, None]:
+    prompt_tokens = 0
+    completion_tokens = 0
+    async for output in engine.generate(prompt, sampling_params, request_id):
+        if output.prompt_token_ids is not None:
+            prompt_tokens = len(output.prompt_token_ids)
+        generated = output.outputs[0]
+        completion_tokens += len(generated.token_ids)
+        yield _sse(
+            {
+                "id": request_id,
+                "object": "text_completion",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "text": generated.text,
+                        "logprobs": None,
+                        "finish_reason": generated.finish_reason,
+                    }
+                ],
+            }
+        )
+    if include_usage:
+        yield _sse(
+            {
+                "id": request_id,
+                "object": "text_completion",
+                "created": created,
+                "model": model,
+                "choices": [],
+                "usage": _usage(prompt_tokens, completion_tokens),
+            }
+        )
+    yield _sse("[DONE]")
 
 
 def build_app(
@@ -74,13 +254,10 @@ def build_app(
 ):
     from fastapi import FastAPI, Header, HTTPException
 
-    inference_lock = Lock()
-
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         yield
-        engine = getattr(llm, "llm_engine", None)
-        shutdown = getattr(engine, "shutdown", None)
+        shutdown = getattr(llm, "shutdown", None)
         if shutdown is not None:
             shutdown()
 
@@ -91,13 +268,6 @@ def build_app(
             return
         if authorization != f"Bearer {api_key}":
             raise HTTPException(status_code=401, detail="invalid API key")
-
-    def reject_stream(body: dict[str, Any]) -> None:
-        if body.get("stream", False):
-            raise HTTPException(
-                status_code=400,
-                detail="stream=true is not implemented by the HXinfer prototype",
-            )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -120,18 +290,17 @@ def build_app(
             ],
         }
 
-    def run_chat(body: dict[str, Any]) -> dict[str, Any]:
+    async def run_chat(body: dict[str, Any]) -> dict[str, Any]:
         messages = _messages_from_request(body)
         sampling_params = _sampling_params(body, default_max_tokens)
-        with inference_lock:
-            output = llm.chat(
-                [messages], sampling_params=sampling_params, use_tqdm=False
-            )[0]
+        prompt = await _chat_prompt(llm, messages)
+        request_id = f"chatcmpl-{uuid.uuid4().hex}"
+        output = await _collect_final(llm, prompt, sampling_params, request_id)
         generated = output.outputs[0]
         prompt_tokens = len(output.prompt_token_ids)
         completion_tokens = len(generated.token_ids)
         return {
-            "id": f"chatcmpl-{uuid.uuid4().hex}",
+            "id": request_id,
             "object": "chat.completion",
             "created": int(time.time()),
             "model": served_model_name,
@@ -143,42 +312,59 @@ def build_app(
                     "finish_reason": generated.finish_reason,
                 }
             ],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
+            "usage": _usage(prompt_tokens, completion_tokens),
         }
 
     @app.post("/v1/chat/completions")
     async def chat_completions(
         body: dict[str, Any],
         authorization: str | None = Header(default=None),
-    ) -> dict[str, Any]:
+    ):
         authorize(authorization)
-        reject_stream(body)
         requested_model = body.get("model")
         if requested_model not in (None, served_model_name):
             raise HTTPException(status_code=404, detail="model not found")
         try:
-            return await asyncio.to_thread(run_chat, body)
+            if body.get("stream", False):
+                from fastapi.responses import StreamingResponse
+
+                messages = _messages_from_request(body)
+                sampling_params = _sampling_params(
+                    body, default_max_tokens, stream=True
+                )
+                prompt = await _chat_prompt(llm, messages)
+                request_id = f"chatcmpl-{uuid.uuid4().hex}"
+                include_usage = bool(
+                    (body.get("stream_options") or {}).get("include_usage", False)
+                )
+                return StreamingResponse(
+                    _stream_chat(
+                        llm,
+                        prompt,
+                        sampling_params,
+                        request_id,
+                        int(time.time()),
+                        served_model_name,
+                        include_usage,
+                    ),
+                    media_type="text/event-stream",
+                )
+            return await run_chat(body)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
-    def run_completion(body: dict[str, Any]) -> dict[str, Any]:
+    async def run_completion(body: dict[str, Any]) -> dict[str, Any]:
         prompt = body.get("prompt")
         if not isinstance(prompt, str) or not prompt:
             raise ValueError("prompt must be a non-empty string")
         sampling_params = _sampling_params(body, default_max_tokens)
-        with inference_lock:
-            output = llm.generate(
-                [prompt], sampling_params=sampling_params, use_tqdm=False
-            )[0]
+        request_id = f"cmpl-{uuid.uuid4().hex}"
+        output = await _collect_final(llm, prompt, sampling_params, request_id)
         generated = output.outputs[0]
         prompt_tokens = len(output.prompt_token_ids)
         completion_tokens = len(generated.token_ids)
         return {
-            "id": f"cmpl-{uuid.uuid4().hex}",
+            "id": request_id,
             "object": "text_completion",
             "created": int(time.time()),
             "model": served_model_name,
@@ -190,25 +376,45 @@ def build_app(
                     "finish_reason": generated.finish_reason,
                 }
             ],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
+            "usage": _usage(prompt_tokens, completion_tokens),
         }
 
     @app.post("/v1/completions")
     async def completions(
         body: dict[str, Any],
         authorization: str | None = Header(default=None),
-    ) -> dict[str, Any]:
+    ):
         authorize(authorization)
-        reject_stream(body)
         requested_model = body.get("model")
         if requested_model not in (None, served_model_name):
             raise HTTPException(status_code=404, detail="model not found")
         try:
-            return await asyncio.to_thread(run_completion, body)
+            if body.get("stream", False):
+                from fastapi.responses import StreamingResponse
+
+                prompt = body.get("prompt")
+                if not isinstance(prompt, str) or not prompt:
+                    raise ValueError("prompt must be a non-empty string")
+                sampling_params = _sampling_params(
+                    body, default_max_tokens, stream=True
+                )
+                request_id = f"cmpl-{uuid.uuid4().hex}"
+                include_usage = bool(
+                    (body.get("stream_options") or {}).get("include_usage", False)
+                )
+                return StreamingResponse(
+                    _stream_completion(
+                        llm,
+                        prompt,
+                        sampling_params,
+                        request_id,
+                        int(time.time()),
+                        served_model_name,
+                        include_usage,
+                    ),
+                    media_type="text/event-stream",
+                )
+            return await run_completion(body)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -235,7 +441,8 @@ def main() -> None:
     parser.add_argument("--language-model-only", action="store_true")
     args = parser.parse_args()
 
-    from vllm import LLM
+    from vllm.engine.arg_utils import AsyncEngineArgs
+    from vllm.v1.engine.async_llm import AsyncLLM
 
     kwargs: dict[str, Any] = {
         "model": args.model,
@@ -258,20 +465,31 @@ def main() -> None:
     if args.attention_backend:
         kwargs["attention_backend"] = args.attention_backend
 
-    llm = LLM(**kwargs)
     served_model_name = (
         args.served_model_name or args.model.rstrip("/").rsplit("/", 1)[-1]
     )
-    app = build_app(llm, served_model_name, args.max_tokens, args.api_key)
 
     import uvicorn
 
-    print(
-        f"HXINFER_API_READY_PENDING host={args.host} port={args.port} "
-        f"model={served_model_name}",
-        flush=True,
-    )
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    async def serve() -> None:
+        llm = AsyncLLM.from_engine_args(AsyncEngineArgs(**kwargs))
+        app = build_app(llm, served_model_name, args.max_tokens, args.api_key)
+        print(
+            f"HXINFER_API_READY_PENDING host={args.host} port={args.port} "
+            f"model={served_model_name}",
+            flush=True,
+        )
+        server = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                host=args.host,
+                port=args.port,
+                log_level="info",
+            )
+        )
+        await server.serve()
+
+    asyncio.run(serve())
 
 
 if __name__ == "__main__":

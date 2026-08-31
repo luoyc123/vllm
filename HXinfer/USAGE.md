@@ -192,6 +192,51 @@ Uvicorn running on http://0.0.0.0:8000
 生产部署必须替换演示 API key，并限制 Worker 控制端口和 activation 端口的
 网络访问范围。
 
+### 6.1 流式请求
+
+API 使用 vLLM `AsyncLLM` 接收请求，`stream=true` 时按 Engine 的增量输出
+返回 OpenAI 兼容 SSE，而不是等待完整答案后再切分字符串：
+
+```bash
+curl -N http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Authorization: Bearer hxinfer-demo' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model":"Qwen2.5-3B-Instruct",
+    "messages":[{"role":"user","content":"介绍流水线并行"}],
+    "max_tokens":64,
+    "temperature":0,
+    "stream":true,
+    "stream_options":{"include_usage":true}
+  }'
+```
+
+响应包含 `chat.completion.chunk`、增量 `delta.content`、最终 usage 和
+`data: [DONE]`。客户端断开后，AsyncLLM 会取消对应 Engine 请求。
+
+### 6.2 使用 vLLM 测试在线并发
+
+流式接口可直接用于 `vllm bench serve`，下面固定输入 128 tokens、输出
+64 tokens，发送 100 个请求，客户端最大并发为 8：
+
+```bash
+export OPENAI_API_KEY=hxinfer-demo
+
+vllm bench serve \
+  --backend openai-chat \
+  --base-url http://127.0.0.1:8000 \
+  --endpoint /v1/chat/completions \
+  --model Qwen2.5-3B-Instruct \
+  --tokenizer /data/models/Qwen2.5-3B-Instruct \
+  --dataset-name random \
+  --random-input-len 128 --random-output-len 64 \
+  --num-prompts 100 --request-rate inf --max-concurrency 8
+```
+
+成功结果必须同时满足 `Successful requests: 100`、`Failed requests: 0`，再读取
+request throughput、output token throughput、TTFT、TPOT 和 ITL。若请求失败，
+工具打印的全零字段不能作为性能数据。
+
 ## 7. 请求与验证
 
 在宿主机的第四个终端执行：
