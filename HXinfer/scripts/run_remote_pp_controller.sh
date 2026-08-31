@@ -20,6 +20,10 @@ export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 export HXINFER_LOG_DIR="${RUN_DIR}"
 export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 
+python "${SCRIPT_DIR}/inspect_partition.py" \
+  --model "${MODEL}" --pp-size 2 --output "${RUN_DIR}/partition.json"
+echo "HXINFER_EXPECTED_PARTITION $(tr -d '\n' < "${RUN_DIR}/partition.json")"
+
 controller_args=(
   python "${SCRIPT_DIR}/qa_vllm.py"
   --model "${MODEL}" \

@@ -9,6 +9,10 @@ from typing import Any
 
 import cloudpickle
 
+from external_pp.partition import (
+    normalize_layer_partition,
+    validate_worker_partitions,
+)
 from external_pp.remote.rpc import RpcClient
 
 
@@ -45,6 +49,17 @@ class HXinferRemoteExecutor(Executor):
         for client in self._clients:
             client.connect()
 
+        controller_partition = normalize_layer_partition(
+            os.getenv("VLLM_PP_LAYER_PARTITION")
+        )
+        worker_statuses = [client.call("__ping__") for client in self._clients]
+        validate_worker_partitions(controller_partition, worker_statuses)
+        print(
+            "HXINFER_PARTITION_CONFIG "
+            f"partition={controller_partition or 'vllm-default'}",
+            flush=True,
+        )
+
         distributed_init_method = os.environ.get(
             "HXINFER_DIST_INIT", "tcp://127.0.0.1:29610"
         )
@@ -61,6 +76,8 @@ class HXinferRemoteExecutor(Executor):
         self.collective_rpc("init_worker", args=(all_kwargs,))
         self.collective_rpc("init_device")
         self.collective_rpc("load_model")
+        partition_info = self.collective_rpc("get_hxinfer_partition_info")
+        print(f"HXINFER_PARTITION_ACTIVE stages={partition_info!r}", flush=True)
         current_platform.update_block_size_for_backend(self.vllm_config)
 
     def _collective_rpc_sync(

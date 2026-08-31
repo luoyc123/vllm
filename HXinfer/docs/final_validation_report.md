@@ -642,7 +642,7 @@ VM 验证必须额外记录：
 | vLLM ROCm 模型与算子支持 | BF16 完整通过；gfx1100 block-FP8 kernel 阻塞 | 按目标模型/dtype继续验证 |
 | CUDA/ROCm PyTorch build 的 CPU/Gloo 互通 | all-reduce 与完整 PP 均已验证 | 不需要 |
 | pickle/`torch.save` 跨版本兼容与安全性 | 仅同版本可信环境验证 | 生产前升级为显式版本化 ABI |
-| 异构负载均衡 | 尚未验证 | 按两卡实测逐层耗时做非均匀切分 |
+| 异构负载均衡 | `24+12`、`11+25`、`10+26` 非对称切层功能已验证；最优性能配比尚未搜索 | 按两卡实测逐层耗时继续调优 |
 
 因此，当前成果已经消除了双 VM 迁移中最大的结构性风险：不再要求两个 GPU 由同一 CUDA/ROCm runtime 或同一个 GPU communicator 管理。剩余风险集中在具体模型的 AMD 算子覆盖、协议生产化和虚拟网络性能，均可以在不推翻 Controller/Worker 架构的情况下逐项验证。
 
@@ -686,7 +686,9 @@ VM 验证必须额外记录：
 
 先用 TCP 完成单 forward，再做连续 greedy decode；通过后切 shared memory。层切分不能简单按层数一半，应根据两张卡的显存、实际每层延迟和 boundary payload 做不均匀 partition。
 
-状态：TCP 单题、6 个正常问答和 8 个短题均通过；共享内存后端与非均匀切层尚未完成。
+状态：TCP 单题、6 个正常问答和 8 个短题均通过；36 层模型的 `24+12`、
+`11+25`、`10+26` 非对称切层已完成实际加载、KV cache、问答与 transport 配对验证。共享内存
+后端和基于 stage latency 搜索最优切层比例尚未完成。
 
 #### Gate F：双 VM
 

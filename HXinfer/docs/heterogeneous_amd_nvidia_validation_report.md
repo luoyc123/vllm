@@ -470,6 +470,30 @@ ROCm 镜像内的 AITER 不能作为 gfx1100 备选。vLLM 0.27.1 的 `is_aiter_
 /data/wuxin-infer/HXinfer/results/heterogeneous-qwen25-3b-simple-qa/comparison.json
 ```
 
+### 5.6 非对称 layer partition
+
+在相同的 Qwen2.5-3B-Instruct、RTX 4090 + RX 7900 XTX 环境中，将默认
+`18+18` 改为 `VLLM_PP_LAYER_PARTITION=24,12`。Controller 在模型加载前
+确认两个 Worker 配置一致，加载后返回的实际区间为：
+
+```text
+rank 0 / RTX 4090: [0, 24)，24 层
+rank 1 / RX 7900 XTX: [24, 36)，12 层
+```
+
+CUDA stage 模型加载显存为 4.06 GiB，ROCm stage 为 2.32 GiB；API 健康
+检查通过，数学题返回 `36`，正常中文问答生成 77 completion tokens。两个
+Worker 均记录 162 次成功 `execute_model`，RPC id 同步；两份 transport
+日志各 84 条，共传输 1,603,620 bytes，配对检查通过。
+
+随后又完成 `11+25` 和 `10+26` 的实际加载、KV cache、问答与 transport
+配对验证，实际边界分别为 `[0,11)+[11,36)` 和 `[0,10)+[10,36)`。
+这证明 HXinfer 已支持可配置非对称 PP，而不是只接受平均切层或硬编码
+`24+12`。对于 36 层模型，
+`11+25`、`10+26` 等任意总和为 36 的正整数配置均可解析；`10+16` 总和
+为 26，会被 vLLM 拒绝。完整过程与边界见
+[非对称 PP 验证报告](asymmetric_pp_validation_report.md)。
+
 ## 6. TCP loopback 与 PCIe 解释
 
 本实验同时使用 TCP loopback 和 PCIe，两者作用不同：
@@ -655,6 +679,7 @@ docker logs --since 2m hxinfer-worker-rocm 2>&1 \
 3. Qwen2.5-3B 在 RTX 4090 + RX 7900 XTX 上完成 PP=2 的加载、KV cache、prefill、连续 greedy decode 和正常退出；
 4. activation 确实通过 PCIe D2H/H2D，并由 TCP loopback 完成跨进程 host 侧交接；
 5. 当前 27B block-FP8 权重的阻塞点是 gfx1100 kernel backend，而不是 HXinfer 通信架构。
+6. 36 层 Qwen2.5-3B 的 `24+12`、`11+25`、`10+26` 非对称 PP 已完成实际加载、KV cache、问答和 activation 配对验证。
 
 后续优先级：
 
@@ -673,6 +698,7 @@ docker logs --since 2m hxinfer-worker-rocm 2>&1 \
 /data/wuxin-infer/HXinfer/results/heterogeneous-qwen25-3b-simple-qa/
 /data/wuxin-infer/HXinfer/results/heterogeneous-qwen25-3b-api/
 /data/wuxin-infer/HXinfer/results/tcp-loopback-large/
+/data/wuxin-infer/HXinfer/results/heterogeneous-qwen25-3b-asymmetric/
 ```
 
 关键源码：
@@ -680,6 +706,7 @@ docker logs --since 2m hxinfer-worker-rocm 2>&1 \
 ```text
 external_pp/remote/executor.py
 external_pp/remote/worker_service.py
+external_pp/partition.py
 external_pp/remote/worker.py
 external_pp/remote/rpc.py
 external_pp/transport/tcp_socket.py

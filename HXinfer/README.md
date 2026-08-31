@@ -13,6 +13,7 @@ HXinfer 是一个面向 CUDA/ROCm 异构 Pipeline Parallel 推理的验证项目
 - Qwen2.5-3B-Instruct 的 6 问批量 chat 与长 decode 验证；功能通过但严格 token gate 尚未通过，详见 [docs/large_model_qa_report.md](docs/large_model_qa_report.md)。
 - Qwen2.5-3B-Instruct 的 8 道短答案题全部正确，Native/External 输出 token 逐项一致；完整结论与限制见 [docs/final_validation_report.md](docs/final_validation_report.md)。
 - 一个 EngineCore 管理两个预先独立启动的 vLLM worker service 已在双 RTX 4090 跑通；正常问答累计生成 690 token，见 [docs/remote_worker_validation_report.md](docs/remote_worker_validation_report.md)。
+- 36 层 Qwen2.5-3B 已在 RTX 4090 + RX 7900 XTX 上完成 `24+12`、`11+25`、`10+26` 三组非对称 PP 问答验证，见 [docs/asymmetric_pp_validation_report.md](docs/asymmetric_pp_validation_report.md)。
 
 旧的同机 External PP 入口是 `external_pp.vllm_worker.HXinferWorker`。面向双 VM 的新入口是 `external_pp.remote.executor.HXinferRemoteExecutor` 与 `external_pp.remote.worker.HXinferRemoteStageWorker`：两个 worker 独立启动，Controller 通过 TCP RPC 管理它们，完整 `IntermediateTensors` mapping 经 pinned host staging 和持久 TCP socket 传输。
 
@@ -31,6 +32,15 @@ bash scripts/run_native_pp.sh
 ```bash
 HXINFER_CONFIG=configs/remote_4090.env bash scripts/run_remote_pp_local.sh
 ```
+
+36 层模型采用非对称 PP 时，在 Controller 和两个 Worker 的共同配置中设置：
+
+```bash
+VLLM_PP_LAYER_PARTITION=24,12
+```
+
+HXinfer 会在模型加载前校验三个进程的配置一致性，并在日志中输出两个
+stage 实际负责的层区间。
 
 双节点/双 VM 分别使用 `scripts/start_remote_worker.sh` 启动 rank 0/1，再在 Controller 节点运行 `scripts/run_remote_pp_controller.sh`。所需地址和端口见 [独立 worker 验证报告](docs/remote_worker_validation_report.md)。
 

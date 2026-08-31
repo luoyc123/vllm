@@ -5,6 +5,7 @@ import os
 import socket
 import traceback
 
+from external_pp.partition import normalize_layer_partition
 from external_pp.remote.rpc import parse_endpoint, recv_message, send_message
 
 
@@ -13,7 +14,18 @@ def main() -> None:
     parser.add_argument("--rank", type=int, choices=(0, 1), required=True)
     parser.add_argument("--listen", required=True, help="control endpoint HOST:PORT")
     parser.add_argument("--visible-device", help="CUDA_VISIBLE_DEVICES value")
+    parser.add_argument(
+        "--layer-partition",
+        default=os.getenv("VLLM_PP_LAYER_PARTITION"),
+        help="PP layer counts, for example 24,12 for a 36-layer model",
+    )
     args = parser.parse_args()
+
+    layer_partition = normalize_layer_partition(args.layer_partition)
+    if layer_partition is None:
+        os.environ.pop("VLLM_PP_LAYER_PARTITION", None)
+    else:
+        os.environ["VLLM_PP_LAYER_PARTITION"] = layer_partition
 
     if args.visible_device is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.visible_device
@@ -47,7 +59,11 @@ def main() -> None:
             )
             try:
                 if method == "__ping__":
-                    result = {"rank": args.rank, "initialized": initialized}
+                    result = {
+                        "rank": args.rank,
+                        "initialized": initialized,
+                        "layer_partition": layer_partition,
+                    }
                 elif method == "__shutdown_service__":
                     if initialized:
                         wrapper.shutdown()
