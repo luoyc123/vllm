@@ -35,6 +35,12 @@ case "${visible_device_env}" in
     ;;
 esac
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
-exec python -m external_pp.remote.worker_service \
-  --rank "${rank}" \
+worker_args=(
+  python -m external_pp.remote.worker_service
+  --rank "${rank}"
   --listen "${listen}"
+)
+if [[ -n "${VLLM_PP_LAYER_PARTITION:-}" ]]; then
+  worker_args+=(--layer-partition "${VLLM_PP_LAYER_PARTITION}")
+fi
+exec "${worker_args[@]}"

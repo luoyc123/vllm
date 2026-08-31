@@ -19,6 +19,9 @@ StageWorker 0 (CUDA) -- IntermediateTensors + metadata --> StageWorker 1 (CUDA/R
 - Phase 2 准备：Native PP 预检、环境/拓扑采集、启动、benchmark、partition 记录脚本。
 - Phase 3 准备：device-neutral message schema、正确性指标函数和严格 gate。
 - Phase 4 correctness 原型：已实现 Unix socket + pinned host staging 数据面，并在双 RTX 4090 上完成连续 decode；性能化的固定 slot shared memory 尚未实现。
+- 异构 External PP：RTX 4090 + RX 7900 XTX 已完成单一 API、连续 decode 和
+  `24+12`、`11+25`、`10+26` 三组非对称 layer partition；当前能够校验三个进程的配置一致性并记录
+  实际层边界，最优性能比例仍需逐 stage 计时搜索。
 
 ## Gate 顺序
 

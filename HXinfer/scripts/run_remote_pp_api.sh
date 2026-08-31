@@ -46,5 +46,8 @@ fi
 if [[ -n "${HXINFER_API_KEY:-}" ]]; then
   api_args+=(--api-key "${HXINFER_API_KEY}")
 fi
+if [[ -n "${VLLM_PP_LAYER_PARTITION:-}" ]]; then
+  api_args+=(--layer-partition "${VLLM_PP_LAYER_PARTITION}")
+fi
 
 "${api_args[@]}" 2>&1 | tee "${RUN_DIR}/api-server.log"

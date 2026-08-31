@@ -192,7 +192,56 @@ Uvicorn running on http://0.0.0.0:8000
 生产部署必须替换演示 API key，并限制 Worker 控制端口和 activation 端口的
 网络访问范围。
 
-## 7. 请求与验证
+## 7. 使用非对称 PP 切层
+
+不设置 `VLLM_PP_LAYER_PARTITION` 时，36 层模型默认分为 `18,18`。
+异构 GPU 的计算能力不同时，可以显式指定每个 PP rank 的层数。例如让
+CUDA rank 0 承担 24 层、ROCm rank 1 承担 12 层：
+
+```text
+VLLM_PP_LAYER_PARTITION=24,12
+rank 0: layers [0, 24)
+rank 1: layers [24, 36)
+```
+
+必须停止并重新启动两个 Worker 和 API 进程；已经加载的模型不能在线改变
+切层。三个进程必须使用完全相同的配置：
+
+```bash
+# CUDA Worker 容器
+/usr/bin/python3 -m external_pp.remote.worker_service \
+  --rank 0 --listen 127.0.0.1:29600 --layer-partition 24,12
+
+# ROCm Worker 容器
+/usr/bin/python3 -m external_pp.remote.worker_service \
+  --rank 1 --listen 127.0.0.1:29601 --layer-partition 24,12
+
+# API 容器：在第 6 节命令末尾增加
+--layer-partition 24,12
+```
+
+使用脚本启动时，只需在同一份 `configs/experiment.env` 中设置：
+
+```bash
+VLLM_PP_LAYER_PARTITION=24,12
+```
+
+启动日志必须包含：
+
+```text
+HXINFER_PARTITION_CONFIG partition=24,12
+HXINFER_PARTITION_ACTIVE stages=[...]
+```
+
+第二行会列出两个 Worker 实际采用的 `start_layer`、`end_layer_exclusive`
+和 `layer_count`。如果 Controller 与任一 Worker 的配置不同，HXinfer 会在
+模型加载前直接报错，避免两个 stage 使用不同边界后产生错误结果。
+
+分区数字的数量必须等于 PP size，数字必须为正数，总和必须等于模型隐藏
+层数。HXinfer 负责格式和跨进程一致性校验，vLLM 在模型初始化时负责校验
+总层数。
+
+## 8. 请求与验证
 
 在宿主机的第四个终端执行：
 
@@ -228,7 +277,7 @@ wc -l \
 
 两个 Worker 日志应出现相同 RPC id，两份 transport 日志应成对增长。
 
-## 8. 停止与再次启动
+## 9. 停止与再次启动
 
 在 API、CUDA Worker 和 ROCm Worker 终端分别按 `Ctrl-C` 停止服务进程。
 需要停止容器时执行：
@@ -240,7 +289,7 @@ docker stop hxinfer-api hxinfer-cuda hxinfer-rocm
 再次使用时先执行 `docker start`，然后重新进入三个容器启动两个 Worker 和
 一个 API 进程。模型和结果目录不会随容器停止而删除。
 
-## 9. 迁移到两个 VM
+## 10. 迁移到两个 VM
 
 两个 VM 中仍只需要两个 Worker 和一个 API/Controller：
 

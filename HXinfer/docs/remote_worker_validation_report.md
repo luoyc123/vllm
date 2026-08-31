@@ -180,7 +180,8 @@ bash scripts/run_remote_pp_controller.sh
 3. AMD 侧验证目标模型、attention backend、BF16 和 HIP pinned H2D；
 4. 将 pickle/`torch.save` 换成显式 header + 原始 tensor bytes；
 5. 增加 request/step id、checksum、timeout、断线恢复和 backpressure；
-6. 根据两张异构卡的实测层耗时做非均匀 layer partition。
+6. `24+12` 非对称 layer partition 已通过功能验证；后续根据两张异构卡的
+   实测 stage latency 搜索最优比例。
 
 结论是“架构和脚本边界可迁移”，不是“CUDA+ROCm 已验证”。双 VM 的 TCP 路径与
 本次 loopback TCP 在协议上等价，但会增加 guest network/vSwitch 开销，性能必须在

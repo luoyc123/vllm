@@ -108,6 +108,19 @@ class HXinferRemoteStageWorker(Worker):
         pp_group.isend_tensor_dict = MethodType(external_send, pp_group)
         pp_group.irecv_tensor_dict = MethodType(external_recv, pp_group)
 
+    def get_hxinfer_partition_info(self) -> dict[str, int | str | None]:
+        start_layer, end_layer = self.model_config.get_layers_start_end_indices(
+            self.parallel_config
+        )
+        return {
+            "rank": self.rank,
+            "start_layer": start_layer,
+            "end_layer_exclusive": end_layer,
+            "layer_count": end_layer - start_layer,
+            "total_layers": self.model_config.get_total_num_hidden_layers(),
+            "layer_partition": os.getenv("VLLM_PP_LAYER_PARTITION"),
+        }
+
     def shutdown(self) -> None:
         transport = getattr(self, "hxinfer_transport", None)
         if transport is not None:

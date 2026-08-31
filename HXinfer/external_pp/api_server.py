@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
 from threading import Lock
 from typing import Any
+
+from external_pp.partition import normalize_layer_partition
 
 
 def resolve_executor_backend(value: str):
@@ -233,7 +236,22 @@ def main() -> None:
     parser.add_argument("--distributed-executor-backend", required=True)
     parser.add_argument("--attention-backend")
     parser.add_argument("--language-model-only", action="store_true")
+    parser.add_argument(
+        "--layer-partition",
+        default=None,
+        help="PP layer counts, for example 24,12 for a 36-layer model",
+    )
     args = parser.parse_args()
+
+    requested_partition = args.layer_partition or os.getenv("VLLM_PP_LAYER_PARTITION")
+    layer_partition = normalize_layer_partition(
+        requested_partition,
+        pp_size=args.pipeline_parallel_size,
+    )
+    if layer_partition is None:
+        os.environ.pop("VLLM_PP_LAYER_PARTITION", None)
+    else:
+        os.environ["VLLM_PP_LAYER_PARTITION"] = layer_partition
 
     from vllm import LLM
 
