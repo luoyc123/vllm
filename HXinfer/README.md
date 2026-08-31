@@ -45,6 +45,10 @@ MAX_MODEL_LEN=512 MAX_NUM_BATCHED_TOKENS=512 MAX_NUM_SEQS=8 \
 bash scripts/run_remote_pp_api.sh
 ```
 
+该入口基于 vLLM `AsyncLLM`，同时支持非流式 JSON 和 `stream=true` 的 OpenAI
+兼容 SSE；多个 HTTP 请求可进入同一 Engine 调度队列，并可使用
+`vllm bench serve --backend openai-chat` 测量在线吞吐与 TTFT/TPOT/ITL。
+
 服务暴露 `/health`、`/v1/models`、`/v1/chat/completions` 和 `/v1/completions`。当前原型支持非流式请求；对外只有一个 API 地址，两个异构 Worker 不暴露 HTTP 接口。
 
 服务启动后可用零第三方依赖客户端完成演示：
