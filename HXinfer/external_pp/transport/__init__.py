@@ -1,6 +1,7 @@
 from .base import PPTransport, ReceivedMessage
+from .gloo import GlooPPTransport
 
-__all__ = ["PPTransport", "ReceivedMessage"]
+__all__ = ["GlooPPTransport", "PPTransport", "ReceivedMessage"]
 from .unix_socket import UnixSocketPPTransport
 
 __all__ = ["UnixSocketPPTransport"]
