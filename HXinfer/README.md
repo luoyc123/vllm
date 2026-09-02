@@ -13,8 +13,9 @@ HXinfer 是一个面向 CUDA/ROCm 异构 Pipeline Parallel 推理的验证项目
 - Qwen2.5-3B-Instruct 的 6 问批量 chat 与长 decode 验证；功能通过但严格 token gate 尚未通过，详见 [docs/large_model_qa_report.md](docs/large_model_qa_report.md)。
 - Qwen2.5-3B-Instruct 的 8 道短答案题全部正确，Native/External 输出 token 逐项一致；完整结论与限制见 [docs/final_validation_report.md](docs/final_validation_report.md)。
 - 一个 EngineCore 管理两个预先独立启动的 vLLM worker service 已在双 RTX 4090 跑通；正常问答累计生成 690 token，见 [docs/remote_worker_validation_report.md](docs/remote_worker_validation_report.md)。
+- activation 数据面支持 `tcp` 与 `gloo` 两种可选后端；使用方法和验证边界见 [Gloo activation backend](docs/gloo_activation_backend.md)。
 
-旧的同机 External PP 入口是 `external_pp.vllm_worker.HXinferWorker`。面向双 VM 的新入口是 `external_pp.remote.executor.HXinferRemoteExecutor` 与 `external_pp.remote.worker.HXinferRemoteStageWorker`：两个 worker 独立启动，Controller 通过 TCP RPC 管理它们，完整 `IntermediateTensors` mapping 经 pinned host staging 和持久 TCP socket 传输。
+旧的同机 External PP 入口是 `external_pp.vllm_worker.HXinferWorker`。面向双 VM 的新入口是 `external_pp.remote.executor.HXinferRemoteExecutor` 与 `external_pp.remote.worker.HXinferRemoteStageWorker`：两个 worker 独立启动，Controller 通过 TCP RPC 管理它们，完整 `IntermediateTensors` mapping 经 pinned host staging 和可选的持久 TCP Socket 或 CPU/Gloo 数据面传输。
 
 ## 快速开始
 

@@ -5,13 +5,14 @@ from types import MethodType
 from typing import Any
 
 import torch
-from vllm.v1.worker.gpu_worker import Worker
 
+from external_pp.transport.gloo import GlooPPTransport
 from external_pp.transport.tcp_socket import TcpSocketPPTransport
+from vllm.v1.worker.gpu_worker import Worker
 
 
 class HXinferRemoteStageWorker(Worker):
-    """A PP worker whose cross-stage group is CPU-only and data plane is TCP."""
+    """A PP worker with a CPU-only group and a selectable activation backend."""
 
     def init_device(self) -> None:
         if self.parallel_config.pipeline_parallel_size != 2:
@@ -74,13 +75,32 @@ class HXinferRemoteStageWorker(Worker):
             gpu_worker.init_worker_distributed_environment = original_init_environment
 
         pp_group = parallel_state.get_pp_group()
-        host = os.environ.get("HXINFER_ACTIVATION_HOST", "127.0.0.1")
-        port = int(os.environ.get("HXINFER_ACTIVATION_PORT", "29620"))
-        transport = TcpSocketPPTransport(
-            rank=pp_group.rank_in_group,
-            host=host,
-            port=port,
-            log_dir=os.environ.get("HXINFER_LOG_DIR"),
+        activation_backend = os.environ.get("HXINFER_ACTIVATION_BACKEND", "tcp").lower()
+        if activation_backend == "tcp":
+            host = os.environ.get("HXINFER_ACTIVATION_HOST", "127.0.0.1")
+            port = int(os.environ.get("HXINFER_ACTIVATION_PORT", "29620"))
+            transport = TcpSocketPPTransport(
+                rank=pp_group.rank_in_group,
+                host=host,
+                port=port,
+                log_dir=os.environ.get("HXINFER_LOG_DIR"),
+            )
+        elif activation_backend == "gloo":
+            transport = GlooPPTransport(
+                rank=pp_group.rank_in_group,
+                group=pp_group.cpu_group,
+                ranks=pp_group.ranks,
+                log_dir=os.environ.get("HXINFER_LOG_DIR"),
+            )
+        else:
+            raise ValueError(
+                "HXINFER_ACTIVATION_BACKEND must be 'tcp' or 'gloo'; "
+                f"got {activation_backend!r}"
+            )
+        print(
+            f"HXINFER_ACTIVATION_BACKEND backend={activation_backend} "
+            f"rank={pp_group.rank_in_group}",
+            flush=True,
         )
         self.hxinfer_transport = transport
 
